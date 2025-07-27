@@ -35,7 +35,7 @@ router.register(r"risk-acceptances", RiskAcceptanceViewSet, basename="risk-accep
 router.register(
     r"reference-controls", ReferenceControlViewSet, basename="reference-controls"
 )
-router.register(r"assets", AssetViewSet, basename="assets")
+router.register(r"business-assets", AssetViewSet, basename="business-assets")
 router.register(r"asset-class", AssetClassViewSet, basename="asset-class")
 
 router.register(r"users", UserViewSet, basename="users")

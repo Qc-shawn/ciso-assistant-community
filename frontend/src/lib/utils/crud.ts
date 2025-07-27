@@ -432,6 +432,7 @@ export const URL_MODEL_MAP: ModelMap = {
 		filters: [{ field: 'folder' }]
 	},
 	assets: {
+		endpointUrl: 'business-assets',
 		name: 'asset',
 		localName: 'asset',
 		localNamePlural: 'assets',
