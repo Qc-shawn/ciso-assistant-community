@@ -208,7 +208,6 @@ export const URL_MODEL_MAP: ModelMap = {
 		filters: [{ field: 'perimeter' }, { field: 'auditor' }, { field: 'status' }]
 	},
 	'risk-assessment_duplicate': {
-		// endpointUrl: 'risk-evaluations',
 		name: 'riskassessment',
 		localName: 'riskAssessment',
 		localNamePlural: 'riskAssessments',
@@ -217,6 +216,7 @@ export const URL_MODEL_MAP: ModelMap = {
 		foreignKeyFields: [{ field: 'perimeter', urlModel: 'perimeters' }]
 	},
 	threats: {
+		endpointUrl: 'threat-landscape',
 		name: 'threat',
 		localName: 'threat',
 		localNamePlural: 'threats',
@@ -432,7 +432,6 @@ export const URL_MODEL_MAP: ModelMap = {
 		filters: [{ field: 'folder' }]
 	},
 	assets: {
-		endpointUrl: 'business-assets',
 		name: 'asset',
 		localName: 'asset',
 		localNamePlural: 'assets',

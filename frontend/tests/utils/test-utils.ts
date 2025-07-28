@@ -239,7 +239,7 @@ export const test = base.extend<Fixtures>({
 	},
 
 	threatsPage: async ({ page }, use) => {
-		const tPage = new PageContent(page, '/threats', 'Threats', [
+		const tPage = new PageContent(page, '/threat-landscape', 'Threats', [
 			{ name: 'name', type: type.TEXT },
 			{ name: 'description', type: type.TEXT },
 			{ name: 'folder', type: type.SELECT_AUTOCOMPLETE },
