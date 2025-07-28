@@ -347,6 +347,7 @@ export const URL_MODEL_MAP: ModelMap = {
 		]
 	},
 	policies: {
+		endpointUrl:'policycenter',
 		name: 'appliedcontrol',
 		localName: 'policy',
 		localNamePlural: 'policies',
@@ -1217,6 +1218,7 @@ export const URL_MODEL_MAP: ModelMap = {
 		selectFields: [{ field: 'status' }, { field: 'category' }]
 	},
 	findings: {
+		endpointUrl:'issues',
 		name: 'finding',
 		localName: 'finding',
 		localNamePlural: 'findings',

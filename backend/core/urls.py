@@ -30,12 +30,12 @@ router.register(r"risk-evaluations", RiskAssessmentViewSet, basename="risk-evalu
 router.register(r"threat-landscape", ThreatViewSet, basename="threat-landscape")
 router.register(r"risk-scenarios", RiskScenarioViewSet, basename="risk-scenarios")
 router.register(r"applied-controls", AppliedControlViewSet, basename="applied-controls")
-router.register(r"policies", PolicyViewSet, basename="policies")
 router.register(r"risk-acceptances", RiskAcceptanceViewSet, basename="risk-acceptances")
+router.register(r"policycenter", PolicyViewSet, basename="policycenter")
 router.register(
     r"reference-controls", ReferenceControlViewSet, basename="reference-controls"
 )
-router.register(r"business-assets", AssetViewSet, basename="business-assets")
+router.register(r"assets", AssetViewSet, basename="assets")
 router.register(r"asset-class", AssetClassViewSet, basename="asset-class")
 
 router.register(r"users", UserViewSet, basename="users")
@@ -85,7 +85,7 @@ router.register(
 router.register(
     r"issue-trackers", FindingsAssessmentViewSet, basename="issue-trackers"
 )
-router.register(r"findings", FindingViewSet, basename="findings")
+router.register(r"issues", FindingViewSet, basename="issues")
 router.register(r"occurrences", IncidentViewSet, basename="incidents")
 router.register(r"timeline-entries", TimelineEntryViewSet, basename="timeline-entries")
 router.register(r"action-centers", TaskTemplateViewSet, basename="action-centers")
