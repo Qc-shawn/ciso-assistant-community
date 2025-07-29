@@ -128,11 +128,16 @@ logger.info("CISO_ASSISTANT_URL: %s", CISO_ASSISTANT_URL)
 ALLOWED_HOSTS = os.environ.get(
     "ALLOWED_HOSTS", "localhost,127.0.0.1,host.docker.internal"
 ).split(",")
+
 logger.info("ALLOWED_HOSTS: %s", ALLOWED_HOSTS)
-CSRF_TRUSTED_ORIGINS = [CISO_ASSISTANT_URL]
+
+CSRF_TRUSTED_ORIGINS = [CISO_ASSISTANT_URL,
+    "http://localhost:3000"]
+
 LOCAL_STORAGE_DIRECTORY = os.environ.get(
     "LOCAL_STORAGE_DIRECTORY", BASE_DIR / "db/attachments"
 )
+
 ATTACHMENT_MAX_SIZE_MB = os.environ.get("ATTACHMENT_MAX_SIZE_MB", 25)
 
 USE_S3 = os.getenv("USE_S3", "False") == "True"
@@ -208,6 +213,7 @@ INSTALLED_APPS = [
     "allauth.mfa",
     "huey.contrib.djhuey",
     "storages",
+    "corsheaders",
 ]
 
 MIDDLEWARE = [
@@ -222,6 +228,7 @@ MIDDLEWARE = [
     "django_structlog.middlewares.RequestMiddleware",
     "core.custom_middleware.AuditlogMiddleware",
     "allauth.account.middleware.AccountMiddleware",
+    "corsheaders.middleware.CorsMiddleware",
 ]
 
 ROOT_URLCONF = "ciso_assistant.urls"
@@ -495,3 +502,8 @@ HUEY = {
 
 AUDITLOG_RETENTION_DAYS = int(os.environ.get("AUDITLOG_RETENTION_DAYS", 90))
 AUDITLOG_MAX_RECORDS = int(os.environ.get("AUDITLOG_MAX_RECORDS", 50000))
+
+CORS_ALLOWED_ORIGINS = [
+    "http://localhost:3000",
+    "http://127.0.0.1:3000",
+]

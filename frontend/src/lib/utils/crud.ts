@@ -177,6 +177,7 @@ export const URL_MODEL_MAP: ModelMap = {
 		filters: [{ field: 'lc_status' }, { field: 'folder' }, { field: 'campaigns' }]
 	},
 	'risk-matrices': {
+		endpointUrl:'risk-heatmaps',
 		name: 'riskmatrix',
 		localName: 'riskMatrix',
 		localNamePlural: 'riskMatrices',

@@ -24,7 +24,7 @@ router.register(
 router.register(r"remediationplans", SolutionViewSet, basename="remediationplans")
 router.register(r"externalstakeholders", RepresentativeViewSet, basename="externalstakeholders")
 router.register(r"departments", PerimeterViewSet, basename="departments")
-router.register(r"risk-matrices", RiskMatrixViewSet, basename="risk-matrices")
+router.register(r"risk-heatmaps", RiskMatrixViewSet, basename="risk-heatmaps")
 router.register(r"systemvulnerabilities", VulnerabilityViewSet, basename="systemvulnerabilities")
 router.register(r"risk-evaluations", RiskAssessmentViewSet, basename="risk-evaluations")
 router.register(r"threat-landscape", ThreatViewSet, basename="threat-landscape")

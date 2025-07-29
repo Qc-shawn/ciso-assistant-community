@@ -44,7 +44,7 @@ export const load: PageServerLoad = async ({ locals, fetch }) => {
 	};
 
 	const usedRiskMatrices: { id: string; name: string; risk_assessments_count: number }[] =
-		await fetch(`${BASE_API_URL}/risk-matrices/used/`)
+		await fetch(`${BASE_API_URL}/risk-heatmaps/used/`)
 			.then((res) => res.json())
 			.then((res) => res.results);
 	const usedFrameworks: { id: string; name: string; compliance_assessments_count: number }[] =

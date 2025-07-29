@@ -11,7 +11,7 @@ import type { LayoutServerLoad } from './$types';
 import { zod } from 'sveltekit-superforms/adapters';
 
 export const load: LayoutServerLoad = async ({ fetch, params }) => {
-	const URLModel: urlModel = 'risk-matrices';
+	const URLModel: urlModel = 'risk-heatmaps';
 	const endpoint = `${BASE_API_URL}/${URLModel}/${params.id}/`;
 
 	const res = await fetch(endpoint);
