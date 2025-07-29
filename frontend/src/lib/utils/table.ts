@@ -37,6 +37,11 @@ const YES_NO_OPTIONS = [
 	{ label: 'no', value: 'false' }
 ];
 
+const YES_NO_UNSET_OPTIONS = [
+	{ label: 'YES', value: 'YES' },
+	{ label: 'NO', value: 'NO' },
+	{ label: '--', value: '--' }
+];
 const PERIMETER_STATUS_FILTER: ListViewFilterConfig = {
 	component: AutocompleteSelect,
 	props: {
@@ -137,6 +142,14 @@ const APPLIED_CONTROL_STATUS_FILTER: ListViewFilterConfig = {
 	}
 };
 
+const RISK_TOLERANCE_FILTER: ListViewFilterConfig = {
+	component: AutocompleteSelect,
+	props: {
+		label: 'withinTolerance',
+		options: YES_NO_UNSET_OPTIONS,
+		multiple: true
+	}
+};
 const TASK_STATUS_FILTER: ListViewFilterConfig = {
 	component: AutocompleteSelect,
 	props: {
@@ -226,6 +239,15 @@ const RISK_ASSESSMENT_FILTER: ListViewFilterConfig = {
 	}
 };
 
+const COMPLIANCE_ASSESSMENT_FILTER: ListViewFilterConfig = {
+	component: AutocompleteSelect,
+	props: {
+		label: 'complianceAssessment',
+		optionsEndpoint: 'compliance-assessments',
+		multiple: true
+	}
+};
+
 const PROVIDER_FILTER: ListViewFilterConfig = {
 	component: AutocompleteSelect,
 	props: {
@@ -310,6 +332,15 @@ const IS_SELECTED_FILTER: ListViewFilterConfig = {
 	component: AutocompleteSelect,
 	props: {
 		label: 'is_selected',
+		options: YES_NO_OPTIONS,
+		multiple: true
+	}
+};
+
+const IS_ASSESSABLE_FILTER: ListViewFilterConfig = {
+	component: AutocompleteSelect,
+	props: {
+		label: 'assessable',
 		options: YES_NO_OPTIONS,
 		multiple: true
 	}
@@ -611,6 +642,7 @@ export const listViewFields = {
 			'inherentLevel',
 			'existingAppliedControls',
 			'currentLevel',
+			'withinTolerance',
 			'extraAppliedControls',
 			'residualLevel',
 			'treatment',
@@ -623,6 +655,7 @@ export const listViewFields = {
 			'inherent_level',
 			'existing_applied_controls',
 			'current_level',
+			'within_tolerance',
 			'applied_controls',
 			'residual_level',
 			'treatment',
@@ -636,7 +669,8 @@ export const listViewFields = {
 			threats: THREAT_FILTER,
 			assets: ASSET_FILTER,
 			current_level: CURRENT_RISK_LEVEL_FILTER,
-			residual_level: RESIDUAL_RISK_LEVEL_FILTER
+			residual_level: RESIDUAL_RISK_LEVEL_FILTER,
+			within_tolerance: RISK_TOLERANCE_FILTER
 		}
 	},
 	'risk-acceptances': {
@@ -796,9 +830,13 @@ export const listViewFields = {
 		}
 	},
 	'requirement-assessments': {
-		head: ['name', 'description', 'complianceAssessment'],
-		body: ['name', 'description', 'compliance_assessment'],
-		breadcrumb_link_disabled: true
+		head: ['assessable', 'name', 'description', 'complianceAssessment', 'result'],
+		body: ['assessable', 'name', 'description', 'compliance_assessment', 'result'],
+		breadcrumb_link_disabled: true,
+		filters: {
+			compliance_assessment: COMPLIANCE_ASSESSMENT_FILTER,
+			requirement__assessable: IS_ASSESSABLE_FILTER
+		}
 	},
 	evidences: {
 		head: ['name', 'file', 'size', 'description', 'folder', 'labels'],
