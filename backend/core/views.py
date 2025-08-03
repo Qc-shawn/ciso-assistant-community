@@ -956,6 +956,8 @@ class RiskAssessmentViewSet(BaseModelViewSet):
         "risk_matrix",
         "status",
         "ebios_rm_study",
+        "authors",
+        "reviewers",
     ]
 
     def perform_create(self, serializer):
@@ -2152,6 +2154,7 @@ class RiskScenarioFilter(GenericFilterSet):
             "assets": ["exact"],
             "applied_controls": ["exact"],
             "security_exceptions": ["exact"],
+            "owner": ["exact"],
         }
 
 
@@ -4248,7 +4251,7 @@ class QualificationViewSet(BaseModelViewSet):
 class CampaignViewSet(BaseModelViewSet):
     model = Campaign
 
-    filterset_fields = ["folder", "frameworks", "perimeters"]
+    filterset_fields = ["folder", "frameworks", "perimeters", "status"]
     search_fields = ["name", "description"]
 
     @method_decorator(cache_page(60 * LONG_CACHE_TTL))
@@ -4309,6 +4312,8 @@ class ComplianceAssessmentViewSet(BaseModelViewSet):
         "ebios_rm_studies",
         "assets",
         "evidences",
+        "authors",
+        "reviewers",
     ]
     search_fields = ["name", "description", "ref_id"]
 
@@ -5113,11 +5118,18 @@ class RequirementAssessmentViewSet(BaseModelViewSet):
         "applied_controls",
         "security_exceptions",
         "requirement__ref_id",
+        "result",
         "compliance_assessment__ref_id",
+        "compliance_assessment__perimeter",
+        "compliance_assessment__perimeter__name",
         "compliance_assessment__assets__ref_id",
         "requirement__assessable",
     ]
-    search_fields = ["requirement__name", "requirement__description"]
+    search_fields = [
+        "requirement__name",
+        "requirement__description",
+        "requirement__ref_id",
+    ]
 
     def update(self, request, *args, **kwargs):
         response = super().update(request, *args, **kwargs)
@@ -5532,7 +5544,15 @@ class SecurityExceptionViewSet(BaseModelViewSet):
     """
 
     model = SecurityException
-    filterset_fields = ["requirement_assessments", "risk_scenarios"]
+    filterset_fields = [
+        "requirement_assessments",
+        "risk_scenarios",
+        "owners",
+        "approver",
+        "folder",
+        "severity",
+        "status",
+    ]
     search_fields = ["name", "description", "ref_id"]
 
     @action(detail=False, name="Get severity choices")
@@ -5674,7 +5694,14 @@ class FindingViewSet(BaseModelViewSet):
 class IncidentViewSet(BaseModelViewSet):
     model = Incident
     search_fields = ["name", "description", "ref_id"]
-    filterset_fields = ["folder", "status", "severity", "qualifications", "detection"]
+    filterset_fields = [
+        "folder",
+        "status",
+        "severity",
+        "qualifications",
+        "detection",
+        "owners",
+    ]
 
     @method_decorator(cache_page(60 * LONG_CACHE_TTL))
     @action(detail=False, name="Get status choices")
@@ -5744,6 +5771,7 @@ class TimelineEntryViewSet(BaseModelViewSet):
 
 class TaskTemplateViewSet(BaseModelViewSet):
     model = TaskTemplate
+    filterset_fields = ["assigned_to", "is_recurrent", "folder"]
 
     def task_calendar(self, task_templates, start=None, end=None):
         """Generate calendar of tasks for the given templates."""
