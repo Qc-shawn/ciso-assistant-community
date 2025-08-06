@@ -1,6 +1,13 @@
 import knox.views as knox_views
 from django.urls import include, path
 
+from iam.views import(
+    RoleCreateView, 
+    AvailablePermissionsView,
+    RoleUpdateView,
+    RoleListView,
+    )
+
 from .views import (
     AuthTokenDetailView,
     PersonalAccessTokenViewSet,
@@ -38,4 +45,10 @@ urlpatterns = [
         AuthTokenDetailView.as_view(),
         name="auth-token-detail",
     ),
+    
+    # ================================ CUSTOM ROLES ========================
+    path("custom-role/", RoleCreateView.as_view(), name="custom-role"),
+    path("available-permissions/", AvailablePermissionsView.as_view(), name="available-permissions"),
+    path("custom-role/list/", RoleListView.as_view(), name="custom-role-list"),
+    path("custom-role/<uuid:id>/", RoleUpdateView.as_view(), name="custom-role-update"),
 ]

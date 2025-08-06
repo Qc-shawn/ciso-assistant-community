@@ -26,7 +26,13 @@ from rest_framework.status import (
 
 from ciso_assistant.settings import EMAIL_HOST, EMAIL_HOST_RESCUE
 
-from .models import Folder, PersonalAccessToken, Role, RoleAssignment
+from .models import (
+    Folder, 
+    PersonalAccessToken, 
+    Role, 
+    RoleAssignment,
+)
+
 from .serializers import (
     ChangePasswordSerializer,
     LoginSerializer,
@@ -35,10 +41,17 @@ from .serializers import (
     SetPasswordSerializer,
 )
 
+from django.contrib.auth.models import Permission
+from rest_framework.views import APIView
+
+from rest_framework.generics import UpdateAPIView
+from .serializers import RoleUpdateSerializer, RoleListSerializer
+from rest_framework.generics import ListAPIView
+
+
 logger = structlog.get_logger(__name__)
 
 User = get_user_model()
-
 
 class LoginView(KnoxLoginView):
     permission_classes = (permissions.AllowAny,)
@@ -381,3 +394,134 @@ class SetPasswordView(views.APIView):
                 )
             return Response(status=status.HTTP_200_OK)
         return Response(status=status.HTTP_401_UNAUTHORIZED)
+
+# ---------------------------------------------------- CUSTOM ROLES VIEWS----------------------------------------------------
+
+from rest_framework.generics import GenericAPIView
+from rest_framework.response import Response
+from rest_framework import status
+from iam.models import Role, UserGroup, Folder, RoleAssignment
+from .serializers import RoleCreateSerializer
+from drf_yasg.utils import swagger_auto_schema
+from drf_yasg import openapi
+
+
+class RoleCreateView(GenericAPIView):
+    serializer_class = RoleCreateSerializer
+
+    @swagger_auto_schema(
+        operation_description="Create a new role, assign permissions, and auto-generate user groups and role assignments for all folders.",
+        request_body=RoleCreateSerializer,
+        responses={201: openapi.Response("Role created")},
+    )
+    def post(self, request):
+        serializer = self.get_serializer(data=request.data)
+        serializer.is_valid(raise_exception=True)
+
+        # 1. Create the Role
+        role = Role.objects.create(
+            name=serializer.validated_data["name"],
+            builtin=False,
+            is_published=True
+        )
+
+        # 2. Assign Permissions
+        permissions = serializer.validated_data.get("permissions")
+        if permissions:
+            role.permissions.set(permissions)
+
+        # 3. Handle all DOMAIN folders first
+        domain_folders = Folder.objects.filter(content_type=Folder.ContentType.DOMAIN)
+
+        for folder in domain_folders:
+            group, _ = UserGroup.objects.get_or_create(
+                name=role.name,
+                folder=folder,
+                defaults={"is_published": True}
+            )
+
+            assignment, _ = RoleAssignment.objects.get_or_create(
+                user_group=group,
+                role=role,
+                folder=folder
+            )
+
+            assignment.is_published = True
+            assignment.name = role.name
+            assignment.folder = folder
+            assignment.perimeter_folders.set([folder])
+            assignment.save(update_fields=["name", "folder", "is_published"])
+
+        # 4. Handle GLOBAL (root) folder separately
+        try:
+            global_folder = Folder.objects.get(content_type=Folder.ContentType.ROOT)
+
+            group, _ = UserGroup.objects.get_or_create(
+                name=role.name,
+                folder=global_folder,
+                defaults={"is_published": True}
+            )
+
+            assignment, _ = RoleAssignment.objects.get_or_create(
+                user_group=group,
+                role=role,
+                folder=global_folder
+            )
+
+            assignment.is_published = True
+            assignment.name = role.name
+            assignment.folder = global_folder
+            assignment.perimeter_folders.set([global_folder])
+            assignment.save(update_fields=["name", "folder", "is_published"])
+
+        except Folder.DoesNotExist:
+            # Optional logging or silent skip
+            pass
+
+        return Response(
+    {
+        "id": str(role.id),
+        "name": role.name,
+        "permissions": list(role.permissions.values_list("codename", flat=True)),
+    },
+    status=status.HTTP_201_CREATED
+)
+        
+# ------------------------------------------------PERMISSIONS------------------------------------------------
+
+class AvailablePermissionsView(APIView):
+    def get(self, request):
+        perms = Permission.objects.all().select_related('content_type')
+        data = [
+            {
+                "id": p.id,
+                "permission": p.codename,
+               
+            }
+            for p in perms
+        ]
+        return Response(data)
+    
+# ------------------------------------------------ UPDATE ROLE ------------------------------------------------
+
+class RoleUpdateView(UpdateAPIView):
+    queryset = Role.objects.all()
+    serializer_class = RoleUpdateSerializer
+    lookup_field = "id"
+    http_method_names = ['put']
+
+    def get_object(self):
+        return Role.objects.get(id=self.kwargs['id'])
+
+# ------------------------------------------------ XXXXXXXXXXXXXX ------------------------------------------------
+
+class RoleListView(ListAPIView):
+    queryset = Role.objects.filter(builtin=False)
+    serializer_class = RoleListSerializer
+    pagination_class = None  # Optional
+
+    def list(self, request, *args, **kwargs):
+        queryset = self.get_queryset()
+        serializer = self.get_serializer(queryset, many=True)
+
+        return Response({"custom-roles": serializer.data})

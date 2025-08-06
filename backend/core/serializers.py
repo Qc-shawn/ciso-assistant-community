@@ -803,8 +803,10 @@ class PolicyReadSerializer(AppliedControlReadSerializer):
 
 
 class UserReadSerializer(BaseModelSerializer):
-    user_groups = FieldsRelatedField(many=True)
-
+    user_groups = serializers.PrimaryKeyRelatedField(
+        many=True,
+        queryset=UserGroup.objects.all()
+    )
     class Meta:
         model = User
         fields = [
@@ -820,10 +822,14 @@ class UserReadSerializer(BaseModelSerializer):
             "observation",
         ]
 
-
+ #-----------------------------------------
 class UserWriteSerializer(BaseModelSerializer):
     is_local = serializers.BooleanField(required=False)
-
+    user_groups = serializers.PrimaryKeyRelatedField(
+        many=True,
+        queryset=UserGroup.objects.all(),
+        required=False
+    )
     class Meta:
         model = User
         fields = [
@@ -855,7 +861,11 @@ class UserWriteSerializer(BaseModelSerializer):
                 {"error": ["You do not have permission to create users"]}
             )
         try:
+            # user = User.objects.create_user(**validated_data)
+            user_groups = validated_data.pop("user_groups", [])
             user = User.objects.create_user(**validated_data)
+            if user_groups:
+                user.user_groups.set(user_groups)
         except Exception as e:
             logger.error(e)
             if (
@@ -892,16 +902,35 @@ class UserWriteSerializer(BaseModelSerializer):
                 # instance.user_groups.set(user_groups_data)
         return super().update(instance, validated_data)
 
+# -------------------------------------------------------------------------------------
+# class UserGroupReadSerializer(BaseModelSerializer):
+#     name = serializers.CharField(source="__str__")
+#     localization_dict = serializers.JSONField(source="get_localization_dict")
+#     folder = FieldsRelatedField()
+
+#     class Meta:
+#         model = UserGroup
+#         fields = "__all__"
 
 class UserGroupReadSerializer(BaseModelSerializer):
     name = serializers.CharField(source="__str__")
-    localization_dict = serializers.JSONField(source="get_localization_dict")
     folder = FieldsRelatedField()
+    localization_dict = serializers.SerializerMethodField()
 
     class Meta:
         model = UserGroup
         fields = "__all__"
 
+    def get_localization_dict(self, obj):
+        from iam.models import RoleAssignment
+        assignment = RoleAssignment.objects.filter(user_group=obj).first()
+
+        return {
+            "folder": obj.folder.name,
+            "role": assignment.role.name if assignment and assignment.role else None
+        }
+
+# -------------------------------------------------------------------------------------
 
 class UserGroupWriteSerializer(BaseModelSerializer):
     class Meta:

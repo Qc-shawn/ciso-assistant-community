@@ -2546,7 +2546,6 @@ class UserGroupViewSet(BaseModelViewSet):
         filters.SearchFilter,
     ]
 
-
 class RoleViewSet(BaseModelViewSet):
     """
     API endpoint that allows roles to be viewed or edited

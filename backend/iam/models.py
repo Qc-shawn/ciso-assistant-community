@@ -45,6 +45,8 @@ logger = structlog.get_logger(__name__)
 
 from auditlog.registry import auditlog
 
+from django.db.models.signals import post_save
+from django.dispatch import receiver
 
 def _get_root_folder():
     """helper function outside of class to facilitate serialization
@@ -54,7 +56,7 @@ def _get_root_folder():
     except:
         return None
 
-
+# ------------------------------------------------------------------------
 class Folder(NameDescriptionMixin):
     """A folder is a container for other folders or any object
     Folders are organized in a tree structure, with a single root folder
@@ -236,8 +238,29 @@ class Folder(NameDescriptionMixin):
                 is_recursive=True,
             )
             ra4.perimeter_folders.add(folder)
-            # Clear the cache after a new folder is created - purposely clearing everything
+            # ========================================================= Auto-assign custom roles =====================================
+            custom_roles = Role.objects.filter(builtin=False)
 
+            for role in custom_roles:
+             # Create a user group for the custom role
+                group = UserGroup.objects.create(
+                    name=f"{role.name.lower()}",
+                    folder=folder,
+                    builtin=False,
+                )
+
+                # Create the role assignment
+                custom_ra = RoleAssignment.objects.create(
+                    user_group=group,
+                    role=role,
+                    builtin=False,
+                    folder=Folder.get_root_folder(),
+                    is_recursive=True,
+                )
+                custom_ra.perimeter_folders.add(folder)
+
+        # Optional: Clear caches if needed
+# -------------------------------------------------------------------------
 
 class FolderMixin(models.Model):
     """
@@ -289,12 +312,14 @@ class UserGroup(NameDescriptionMixin, FolderMixin):
 
         verbose_name = _("user group")
         verbose_name_plural = _("user groups")
+        unique_together = ("name", "folder")
+
 
     def __str__(self) -> str:
         if self.builtin:
             return f"{self.folder.name} - {BUILTIN_USERGROUP_CODENAMES.get(self.name)}"
-        return self.name
-
+        return f"{self.folder.name}-{self.name}"
+    
     def get_name_display(self) -> str:
         return self.name
 
@@ -674,8 +699,8 @@ class Role(NameDescriptionMixin, FolderMixin):
 
     def __str__(self) -> str:
         if self.builtin:
-            return f"{BUILTIN_ROLE_CODENAMES.get(self.name)}"
-        return self.name
+            return str(BUILTIN_ROLE_CODENAMES.get(self.name, self.name))
+        return str(self.name)
 
 
 class RoleAssignment(NameDescriptionMixin, FolderMixin):
@@ -929,6 +954,9 @@ class RoleAssignment(NameDescriptionMixin, FolderMixin):
                     for f in folder.get_sub_folders():
                         permissions[str(f.id)] |= ra_permissions
         return permissions
+    
+    class Meta:
+        unique_together = ("user_group", "user", "role")
 
 
 class PersonalAccessToken(models.Model):
@@ -960,3 +988,64 @@ auditlog.register(
     m2m_fields={"user_groups"},
     exclude_fields=["created_at", "updated_at", "password"],
 )
+
+# --------------------------------CUSTOM ROLES------------------------------------
+# @receiver(post_save, sender=Role)
+# def create_usergroup_for_new_role(sender, instance, created, **kwargs):
+#     if not created or instance.builtin:
+#         return
+
+#     from iam.models import UserGroup, Folder, RoleAssignment
+
+#     # Include all relevant folders (domains + global)
+#     folders = Folder.objects.filter(
+#         content_type__in=[Folder.ContentType.DOMAIN, Folder.ContentType.ROOT]
+#     )
+
+#     for folder in folders:
+#         group, created = UserGroup.objects.get_or_create(
+#         name=instance.name,
+#         folder=folder,
+#         defaults={"is_published": True}
+#     )
+
+#         # Assign the role to the user group if not already assigned
+#         if not RoleAssignment.objects.filter(user_group=group, role=instance, folder=folder).exists():
+#             RoleAssignment.objects.create(
+#                 user_group=group,
+#                 role=instance,
+#                 folder=folder
+#             )
+
+
+
+from django.db.models.signals import post_save
+from django.dispatch import receiver
+from iam.models import Role, UserGroup, Folder, RoleAssignment
+
+@receiver(post_save, sender=Role)
+def ensure_usergroup_exists_for_role(sender, instance, **kwargs):
+    # Skip builtin roles
+    if instance.builtin:
+        return
+
+    # Include all relevant folders (domains + global)
+    folders = Folder.objects.filter(
+        content_type__in=[Folder.ContentType.DOMAIN, Folder.ContentType.ROOT]
+    )
+
+    for folder in folders:
+        group, _ = UserGroup.objects.get_or_create(
+            name=instance.name,
+            folder=folder,
+            defaults={"is_published": True}
+        )
+
+        # Assign the role to the user group if not already assigned
+        RoleAssignment.objects.get_or_create(
+            user_group=group,
+            role=instance,
+            folder=folder,
+            defaults={"is_recursive": False, "builtin": False}
+        )
+
