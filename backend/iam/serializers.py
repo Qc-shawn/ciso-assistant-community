@@ -10,6 +10,8 @@ from .models import (
     )
 
 from rest_framework import serializers
+from .models import Team
+from django.contrib.auth import get_user_model
 
 logger = structlog.get_logger(__name__)
 
@@ -171,6 +173,7 @@ class RoleListSerializer(serializers.ModelSerializer):
 
 from iam.models import UserGroup, RoleAssignment
 from django.contrib.auth.models import Permission
+from django.db import transaction
 
 class RoleUpdateSerializer(serializers.Serializer):
     name = serializers.CharField(required=True)
@@ -184,12 +187,10 @@ class RoleUpdateSerializer(serializers.Serializer):
             raise serializers.ValidationError(f"Invalid permissions: {invalid}")
         return value
 
+    @transaction.atomic
     def update(self, instance, validated_data):
-        from iam.models import UserGroup, RoleAssignment
-        from django.contrib.auth.models import Permission
-
         old_name = instance.name
-        new_name = validated_data["name"]
+        new_name = validated_data["name"].strip().lower()
 
         # 1. Update the role name and permissions
         instance.name = new_name
@@ -197,45 +198,45 @@ class RoleUpdateSerializer(serializers.Serializer):
         perms = Permission.objects.filter(codename__in=validated_data["permissions"])
         instance.permissions.set(perms)
 
-        # 2. Find all folders for old_name groups
         user_groups = UserGroup.objects.filter(name=old_name)
+        processed_folders = set()
         for old_group in user_groups:
-            # Try to find a group with new_name in this folder
+            processed_folders.add(old_group.folder_id)
             try:
                 new_group = UserGroup.objects.get(name=new_name, folder=old_group.folder)
                 if new_group.id != old_group.id:
-                    # Merge users
-                    if hasattr(old_group, 'users') and hasattr(new_group, 'users'):
-                        for user in old_group.users.all():
-                            new_group.users.add(user)
-                    # Move assignments to new_group
                     for ra in RoleAssignment.objects.filter(user_group=old_group):
-                          # Check for duplicate assignment in new_group (same user, same role)
-                          exists = RoleAssignment.objects.filter(
-                              user_group=new_group,
-                              user=ra.user,  # Only if you have a user field
-                              role=ra.role
-                          )
-                          if exists.exists():
-                              # Duplicate exists: just delete the old assignment
-                              ra.delete()
-                          else:
-                              ra.user_group = new_group
-                              ra.name = new_name
-                              ra.save(update_fields=["user_group", "name"])
+                        exists = RoleAssignment.objects.filter(
+                            user_group=new_group,
+                            role=ra.role,
+                            folder=ra.folder,
+                            user=ra.user,
+                        ).exists()
+                        if not exists:
+                            ra.user_group = new_group
+                            ra.save()
+                        else:
+                            ra.delete()
+                    for user in old_group.user_set.all():
+                        new_group.user_set.add(user)
+                    old_group.delete()
+                else:
+                    old_group.name = new_name
+                    old_group.save()
             except UserGroup.DoesNotExist:
-                # No group with new_name: rename old_group
                 old_group.name = new_name
                 old_group.save()
+        
+        for folder_id in processed_folders:
+            dups = UserGroup.objects.filter(name=new_name, folder_id=folder_id)
+            if dups.count() > 1:
+                keep = dups.first()
+                for extra in dups[1:]:
+                    for ra in RoleAssignment.objects.filter(user_group=extra):
+                        ra.user_group = keep
+                        ra.save()
+                    extra.delete()
 
-        # 3. FINAL BULLETPROOF CLEANUP: Remove *any* leftover groups with the old name!
-        UserGroup.objects.filter(name=old_name).delete()
-
-        # 4. Update all assignments for this role to the new name
-        assignments = RoleAssignment.objects.filter(role=instance)
-        for assignment in assignments:
-            assignment.name = new_name
-            assignment.save(update_fields=["name"])
 
         return instance
 
@@ -245,3 +246,60 @@ class RoleUpdateSerializer(serializers.Serializer):
             "name": instance.name,
             "permissions": list(instance.permissions.values_list("codename", flat=True)),
         }
+
+# ========================= TEAM SERIALIZER =========================
+
+User = get_user_model()
+
+class TeamCreateSerializer(serializers.Serializer):
+    name = serializers.CharField(max_length=255)
+    user_ids = serializers.ListField(
+        child=serializers.UUIDField(),
+        min_length=1
+    )
+
+    def validate_user_ids(self, value):
+        users = User.objects.filter(id__in=value)
+        if users.count() != len(value):
+            raise serializers.ValidationError("One or more user IDs are invalid.")
+        return value
+
+    def create(self, validated_data):
+        team = Team.objects.create(name=validated_data['name'])
+        team.users.set(User.objects.filter(id__in=validated_data['user_ids']))
+        return team
+    
+# ========================== TEAM UPDATE SERIALIZER =========================
+
+class TeamUpdateSerializer(serializers.Serializer):
+    name = serializers.CharField(max_length=255, required=False)
+    user_ids = serializers.ListField(child=serializers.UUIDField(), required=False)
+
+    def validate_user_ids(self, value):
+        users = User.objects.filter(id__in=value)
+        if users.count() != len(value):
+            raise serializers.ValidationError("One or more user IDs are invalid.")
+        return value
+
+    def update(self, instance, validated_data):
+        if 'name' in validated_data:
+            instance.name = validated_data['name']
+        if 'user_ids' in validated_data:
+            users = User.objects.filter(id__in=validated_data['user_ids'])
+            instance.users.set(users)
+        instance.save()
+        return instance
+# ========================== TEAM LIST SERIALIZER =========================
+
+class TeamListSerializer(serializers.ModelSerializer):
+    users = serializers.SerializerMethodField()
+
+    class Meta:
+        model = Team
+        fields = ('id', 'name', 'users')
+
+    def get_users(self, obj):
+        return [
+            {"id": str(user.id), "user email": user.username}
+            for user in obj.users.all()
+        ]

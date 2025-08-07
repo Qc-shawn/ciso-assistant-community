@@ -47,6 +47,7 @@ from auditlog.registry import auditlog
 
 from django.db.models.signals import post_save
 from django.dispatch import receiver
+from django.contrib.auth import get_user_model
 
 def _get_root_folder():
     """helper function outside of class to facilitate serialization
@@ -1049,3 +1050,16 @@ def ensure_usergroup_exists_for_role(sender, instance, **kwargs):
             defaults={"is_recursive": False, "builtin": False}
         )
 
+# ============================= TEAMS =============================
+
+
+User = get_user_model()
+
+class Team(models.Model):
+    id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
+    name = models.CharField(max_length=255)
+    users = models.ManyToManyField(User, related_name='teams')
+    created_at = models.DateTimeField(auto_now_add=True)
+
+    def __str__(self):
+        return self.name

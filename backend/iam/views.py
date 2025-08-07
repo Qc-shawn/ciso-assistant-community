@@ -23,6 +23,7 @@ from rest_framework.status import (
     HTTP_401_UNAUTHORIZED,
     HTTP_500_INTERNAL_SERVER_ERROR,
 )
+from rest_framework.generics import DestroyAPIView
 
 from ciso_assistant.settings import EMAIL_HOST, EMAIL_HOST_RESCUE
 
@@ -39,6 +40,9 @@ from .serializers import (
     PersonalAccessTokenReadSerializer,
     ResetPasswordConfirmSerializer,
     SetPasswordSerializer,
+    TeamUpdateSerializer,
+    TeamListSerializer,
+
 )
 
 from django.contrib.auth.models import Permission
@@ -47,7 +51,12 @@ from rest_framework.views import APIView
 from rest_framework.generics import UpdateAPIView
 from .serializers import RoleUpdateSerializer, RoleListSerializer
 from rest_framework.generics import ListAPIView
-
+from .serializers import TeamCreateSerializer
+from .models import Team
+from core.startup import (
+    READER_PERMISSIONS_LIST, APPROVER_PERMISSIONS_LIST, ANALYST_PERMISSIONS_LIST,
+    DOMAIN_MANAGER_PERMISSIONS_LIST, ADMINISTRATOR_PERMISSIONS_LIST, THIRD_PARTY_RESPONDENT_PERMISSIONS_LIST
+)
 
 logger = structlog.get_logger(__name__)
 
@@ -398,7 +407,6 @@ class SetPasswordView(views.APIView):
 # ---------------------------------------------------- CUSTOM ROLES VIEWS----------------------------------------------------
 
 from rest_framework.generics import GenericAPIView
-from rest_framework.response import Response
 from rest_framework import status
 from iam.models import Role, UserGroup, Folder, RoleAssignment
 from .serializers import RoleCreateSerializer
@@ -489,18 +497,19 @@ class RoleCreateView(GenericAPIView):
         
 # ------------------------------------------------PERMISSIONS------------------------------------------------
 
-class AvailablePermissionsView(APIView):
+class PermissionGroupsView(APIView):
+    """
+    Get all pre-defined permission groups, by business role.
+    """
     def get(self, request):
-        perms = Permission.objects.all().select_related('content_type')
-        data = [
-            {
-                "id": p.id,
-                "permission": p.codename,
-               
-            }
-            for p in perms
-        ]
-        return Response(data)
+        return Response({
+            "reader": READER_PERMISSIONS_LIST,
+            "approver": APPROVER_PERMISSIONS_LIST,
+            "analyst": ANALYST_PERMISSIONS_LIST,
+            "domain_manager": DOMAIN_MANAGER_PERMISSIONS_LIST,
+            "administrator": ADMINISTRATOR_PERMISSIONS_LIST,
+            "third_party_respondent": THIRD_PARTY_RESPONDENT_PERMISSIONS_LIST,
+        })
     
 # ------------------------------------------------ UPDATE ROLE ------------------------------------------------
 
@@ -525,3 +534,67 @@ class RoleListView(ListAPIView):
         serializer = self.get_serializer(queryset, many=True)
 
         return Response({"custom-roles": serializer.data})
+    
+    
+# ------------------------------------------------ TEAM VIEW ------------------------------------------------
+from rest_framework.generics import CreateAPIView
+
+class TeamCreateView(CreateAPIView):
+    queryset = Team.objects.all()
+    serializer_class = TeamCreateSerializer
+
+    def create(self, request, *args, **kwargs):
+        serializer = self.get_serializer(data=request.data)
+        serializer.is_valid(raise_exception=True)
+        team = serializer.save()
+        users = team.users.all()
+        return Response({
+            "team_id": team.id,
+            "team_name": team.name,
+            "users": [
+                {"id": user.id, "username": user.username}
+                for user in users
+            ]
+        }, status=status.HTTP_201_CREATED)
+
+# ------------------------------------------------ UPDATE TEAM VIEW ------------------------------------------------
+from rest_framework.permissions import IsAuthenticated
+
+class TeamUpdateView(UpdateAPIView):
+    queryset = Team.objects.all()
+    serializer_class = TeamUpdateSerializer
+    lookup_field = "id"
+    permission_classes = [IsAuthenticated]
+    def update(self, request, *args, **kwargs):
+        instance = self.get_object()
+        serializer = self.get_serializer(instance, data=request.data, partial=True)
+        serializer.is_valid(raise_exception=True)
+        team = serializer.save()
+        users = team.users.all()
+        return Response({
+            "team_id": str(team.id),
+            "team_name": team.name,
+            "users": [
+                {"id": str(user.id), "user email": user.username}
+                for user in users
+            ]
+        }, status=status.HTTP_200_OK)
+        
+# -------------------------------------------------- TEAM DELETE VIEW ------------------------------------------------
+class TeamDeleteView(DestroyAPIView):
+    queryset = Team.objects.all()
+    lookup_field = "id" 
+    permission_classes = [IsAuthenticated]
+    
+    def delete(self, request, *args, **kwargs):
+        team = self.get_object()
+        team_id = str(team.id)
+        team.delete()
+        return Response(
+            {"message": f"Team {team_id} deleted."},
+            status=status.HTTP_204_NO_CONTENT
+        )
+# ---------------------------------------------------- TEAM LIST VIEW ------------------------------------------------
+class TeamListView(ListAPIView):
+    queryset = Team.objects.all()
+    serializer_class = TeamListSerializer
