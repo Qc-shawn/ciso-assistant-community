@@ -138,7 +138,7 @@ class PersonalAccessTokenReadSerializer(serializers.ModelSerializer):
 class RoleCreateSerializer(serializers.Serializer):
     name = serializers.CharField(max_length=255)
     permissions = serializers.ListField(
-        child=serializers.CharField(), required=False
+        child=serializers.CharField(), required=True
     )
     def validate_name(self, value):
         from iam.models import Role
@@ -148,6 +148,8 @@ class RoleCreateSerializer(serializers.Serializer):
 
     def validate_permissions(self, value):
         from django.contrib.auth.models import Permission
+        if not value or len(value) == 0:
+            raise serializers.ValidationError("A role must have at least one permission.")
         perms = Permission.objects.filter(codename__in=value)
         if perms.count() != len(value):
             raise serializers.ValidationError("Some permissions are invalid.")
@@ -182,6 +184,8 @@ class RoleUpdateSerializer(serializers.Serializer):
     )
 
     def validate_permissions(self, value):
+        if value == []:
+            raise serializers.ValidationError("A role must have at least one permission.")
         invalid = [p for p in value if not Permission.objects.filter(codename=p).exists()]
         if invalid:
             raise serializers.ValidationError(f"Invalid permissions: {invalid}")
@@ -276,6 +280,8 @@ class TeamUpdateSerializer(serializers.Serializer):
     user_ids = serializers.ListField(child=serializers.UUIDField(), required=False)
 
     def validate_user_ids(self, value):
+        if len(value) < 2:
+            raise serializers.ValidationError("A team must have at least two users.")
         users = User.objects.filter(id__in=value)
         if users.count() != len(value):
             raise serializers.ValidationError("One or more user IDs are invalid.")

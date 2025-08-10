@@ -2584,7 +2584,8 @@ class UserGroupOrderingFilter(filters.OrderingFilter):
 
         return mapped_ordering
 
-
+from django.contrib.auth import get_user_model
+from django.db.models import Count
 class UserGroupViewSet(BaseModelViewSet):
     """
     API endpoint that allows user groups to be viewed or edited
@@ -2602,7 +2603,26 @@ class UserGroupViewSet(BaseModelViewSet):
         UserGroupOrderingFilter,
         filters.SearchFilter,
     ]
+    
+    def destroy(self, request, *args, **kwargs):
+        group = self.get_object()
+        User = get_user_model()
 
+        users_with_only_this = (
+            User.objects
+            .filter(user_groups=group)
+            .annotate(group_count=Count('user_groups', distinct=True))
+            .filter(group_count=1)
+        )
+
+        if users_with_only_this.exists():
+            
+            return Response(
+                {"detail": "cannotDeleteGroupBecauseItIsOnlyGroupForSomeUsers"},
+                status=status.HTTP_409_CONFLICT
+            )
+        return super().destroy(request, *args, **kwargs)
+    
 class RoleViewSet(BaseModelViewSet):
     """
     API endpoint that allows roles to be viewed or edited
