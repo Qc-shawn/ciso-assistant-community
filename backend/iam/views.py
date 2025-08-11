@@ -413,10 +413,8 @@ from .serializers import RoleCreateSerializer
 from drf_yasg.utils import swagger_auto_schema
 from drf_yasg import openapi
 
-
 class RoleCreateView(GenericAPIView):
     serializer_class = RoleCreateSerializer
-
     @swagger_auto_schema(
         operation_description="Create a new role, assign permissions, and auto-generate user groups and role assignments for all folders.",
         request_body=RoleCreateSerializer,
@@ -426,75 +424,114 @@ class RoleCreateView(GenericAPIView):
         serializer = self.get_serializer(data=request.data)
         serializer.is_valid(raise_exception=True)
 
-        # 1. Create the Role
+        from iam.models import Folder, Role, UserGroup, RoleAssignment
+
+        # 1) Create the Role
         role = Role.objects.create(
             name=serializer.validated_data["name"],
             builtin=False,
             is_published=True
         )
 
-        # 2. Assign Permissions
+        # 2) Assign Permissions (validated to a queryset)
         permissions = serializer.validated_data.get("permissions")
         if permissions:
             role.permissions.set(permissions)
 
-        # 3. Handle all DOMAIN folders first
-        domain_folders = Folder.objects.filter(content_type=Folder.ContentType.DOMAIN)
+        # 2b) Persist the scope on the role so future domains behave correctly
+        apply_all   = serializer.validated_data.get("apply_to_all_companies", False)
+        select_some = serializer.validated_data.get("select_specific_companies", False)
+        role.auto_apply_to_new_companies = bool(apply_all)
+        role.save(update_fields=["auto_apply_to_new_companies"])
 
-        for folder in domain_folders:
-            group, _ = UserGroup.objects.get_or_create(
-                name=role.name,
-                folder=folder,
-                defaults={"is_published": True}
+        # 3) Optional scope: create UserGroups + RoleAssignments per company
+        root = Folder.get_root_folder()
+        apply_all = serializer.validated_data.get("apply_to_all_companies", False)
+        select_some = serializer.validated_data.get("select_specific_companies", False)
+        company_ids = serializer.validated_data.get("company_ids") or []
+        created_assignments = []
+
+        # Determine target companies (Folders with content_type=DOMAIN)
+        companies_qs = None
+        if apply_all:
+            companies_qs = Folder.objects.filter(content_type=Folder.ContentType.DOMAIN)
+        elif select_some:
+            companies_qs = Folder.objects.filter(
+                id__in=company_ids,
+                content_type=Folder.ContentType.DOMAIN
             )
 
-            assignment, _ = RoleAssignment.objects.get_or_create(
-                user_group=group,
-                role=role,
-                folder=folder
-            )
+        if companies_qs is not None:
+            for company in companies_qs:
+                # UserGroup name = Role name (as requested)
+                group, _ = UserGroup.objects.get_or_create(
+                    name=role.name,
+                    folder=company,
+                    defaults={"builtin": False}
+                )
+                ra, _ = RoleAssignment.objects.get_or_create(
+                    user_group=group,
+                    role=role,
+                    folder=root,
+                    defaults={"is_recursive": True},
+                )
+                ra.perimeter_folders.add(company)
+                ra.is_recursive = True
+                ra.name = role.name
+                ra.save(update_fields=["is_recursive", "name"])
 
-            assignment.is_published = True
-            assignment.name = role.name
-            assignment.folder = folder
-            assignment.perimeter_folders.set([folder])
-            assignment.save(update_fields=["name", "folder", "is_published"])
+                created_assignments.append({
+                    "company_id": str(company.id),
+                    "company": company.name,
+                    "user_group": group.name
+                })
+                
+                if apply_all:
+                    try:
+                        global_folder = Folder.objects.get(content_type=Folder.ContentType.ROOT)
 
-        # 4. Handle GLOBAL (root) folder separately
-        try:
-            global_folder = Folder.objects.get(content_type=Folder.ContentType.ROOT)
+                        # UserGroup name = role name (same convention)
+                        group, _ = UserGroup.objects.get_or_create(
+                            name=role.name,
+                            folder=global_folder,
+                            defaults={"builtin": False}
+                        )
 
-            group, _ = UserGroup.objects.get_or_create(
-                name=role.name,
-                folder=global_folder,
-                defaults={"is_published": True}
-            )
+                        # Put the RA at ROOT and scope it to ROOT (i.e., Global)
+                        ra, _ = RoleAssignment.objects.get_or_create(
+                            user_group=group,
+                            role=role,
+                            folder=global_folder,
+                            defaults={"is_recursive": True},
+                        )
+                        ra.perimeter_folders.set([global_folder])
+                        ra.is_recursive = True
+                        ra.name = role.name
+                        ra.save(update_fields=["is_recursive", "name"])
 
-            assignment, _ = RoleAssignment.objects.get_or_create(
-                user_group=group,
-                role=role,
-                folder=global_folder
-            )
-
-            assignment.is_published = True
-            assignment.name = role.name
-            assignment.folder = global_folder
-            assignment.perimeter_folders.set([global_folder])
-            assignment.save(update_fields=["name", "folder", "is_published"])
-
-        except Folder.DoesNotExist:
-            # Optional logging or silent skip
-            pass
-
+                        created_assignments.append({
+                            "company_id": str(global_folder.id),
+                            "company": global_folder.name,   # "Global"
+                            "user_group": group.name
+                        })
+                    except Folder.DoesNotExist:
+                        pass
+        # 4) Response
         return Response(
-    {
-        "id": str(role.id),
-        "name": role.name,
-        "permissions": list(role.permissions.values_list("codename", flat=True)),
-    },
-    status=status.HTTP_201_CREATED
-)
-        
+            {
+                "id": str(role.id),
+                "name": role.name,
+                "permissions": list(role.permissions.values_list("codename", flat=True)),
+                "assignments_created": created_assignments,
+                "note": (
+                    "Future companies will auto-provision a matching user group for this role "
+                    "via Folder.create_default_ug_and_ra (since this is a non-builtin role)."
+                    if (apply_all or select_some) else
+                    "No company scope selected; only the role was created."
+                ),
+            },
+            status=status.HTTP_201_CREATED
+        )
 # ------------------------------------------------PERMISSIONS------------------------------------------------
 
 class PermissionGroupsView(APIView):
@@ -598,3 +635,4 @@ class TeamDeleteView(DestroyAPIView):
 class TeamListView(ListAPIView):
     queryset = Team.objects.all()
     serializer_class = TeamListSerializer
+
