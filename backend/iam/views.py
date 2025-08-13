@@ -523,12 +523,6 @@ class RoleCreateView(GenericAPIView):
                 "name": role.name,
                 "permissions": list(role.permissions.values_list("codename", flat=True)),
                 "assignments_created": created_assignments,
-                "note": (
-                    "Future companies will auto-provision a matching user group for this role "
-                    "via Folder.create_default_ug_and_ra (since this is a non-builtin role)."
-                    if (apply_all or select_some) else
-                    "No company scope selected; only the role was created."
-                ),
             },
             status=status.HTTP_201_CREATED
         )
