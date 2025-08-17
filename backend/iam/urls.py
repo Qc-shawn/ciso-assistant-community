@@ -61,4 +61,6 @@ urlpatterns = [
     path('teams/<uuid:id>/update/', TeamUpdateView.as_view(), name='team-update'),
     path('teams/<uuid:id>/delete/', TeamDeleteView.as_view(), name='team-delete'),
     path('teams/', TeamListView.as_view(), name='team-list'),
+    # =============================== x ====================================
+
 ]

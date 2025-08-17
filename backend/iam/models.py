@@ -240,8 +240,7 @@ class Folder(NameDescriptionMixin):
             )
             ra4.perimeter_folders.add(folder)
             # ========================================================= Auto-assign custom roles =====================================
-            custom_roles = Role.objects.filter(builtin=False)
-
+            custom_roles = Role.objects.filter(builtin=False, auto_apply_to_new_companies=True)
             for role in custom_roles:
              # Create a user group for the custom role
                 group = UserGroup.objects.create(
@@ -697,6 +696,7 @@ class Role(NameDescriptionMixin, FolderMixin):
         blank=True,
     )
     builtin = models.BooleanField(default=False)
+    auto_apply_to_new_companies = models.BooleanField(default=False)
 
     def __str__(self) -> str:
         if self.builtin:
@@ -1019,41 +1019,7 @@ auditlog.register(
 #             )
 
 
-
-from django.db.models.signals import post_save
-from django.dispatch import receiver
-from iam.models import Role, UserGroup, Folder, RoleAssignment
-
-@receiver(post_save, sender=Role)
-def ensure_usergroup_exists_for_role(sender, instance, **kwargs):
-    # Skip builtin roles
-    if instance.builtin:
-        return
-
-    # Include all relevant folders (domains + global)
-    folders = Folder.objects.filter(
-        content_type__in=[Folder.ContentType.DOMAIN, Folder.ContentType.ROOT]
-    )
-
-    for folder in folders:
-        group, _ = UserGroup.objects.get_or_create(
-            name=instance.name,
-            folder=folder,
-            defaults={"is_published": True}
-        )
-
-        # Assign the role to the user group if not already assigned
-        RoleAssignment.objects.get_or_create(
-            user_group=group,
-            role=instance,
-            folder=folder,
-            defaults={"is_recursive": False, "builtin": False}
-        )
-
 # ============================= TEAMS =============================
-
-
-User = get_user_model()
 
 class Team(models.Model):
     id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)

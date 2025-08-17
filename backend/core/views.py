@@ -24,6 +24,7 @@ from django.db.models import (
     Value,
 )
 from django.db.models.functions import Greatest, Coalesce
+from django.db.models import Count
 
 
 from collections import defaultdict
@@ -2584,9 +2585,6 @@ class UserGroupOrderingFilter(filters.OrderingFilter):
                 mapped_ordering.append(field)
 
         return mapped_ordering
-
-from django.contrib.auth import get_user_model
-from django.db.models import Count
 class UserGroupViewSet(BaseModelViewSet):
     """
     API endpoint that allows user groups to be viewed or edited
@@ -2604,26 +2602,84 @@ class UserGroupViewSet(BaseModelViewSet):
         UserGroupOrderingFilter,
         filters.SearchFilter,
     ]
-    
+
+    # def destroy(self, request, *args, **kwargs):
+    #     group = self.get_object()
+    #     User = get_user_model()
+
+    #     # All users in this group
+    #     users_in_group = User.objects.filter(user_groups=group).distinct()
+
+    #     # IDs of users in this group
+    #     user_ids_in_group = users_in_group.values_list("id", flat=True)
+
+    #     # Users who ONLY have this group
+    #     users_only_this_group = (
+    #         User.objects.filter(id__in=user_ids_in_group)
+    #         .annotate(group_count=Count('user_groups', distinct=True))
+    #         .filter(group_count=1)
+    #     )
+
+    #     if users_only_this_group.exists():
+    #         return Response(
+    #             {
+    #                 "detail": "cannotDeleteGroupBecauseItIsOnlyGroupForSomeUsers",
+    #                 "group_id": group.id,
+    #                 "group_name": group.name,
+    #                 "users_in_group": list(users_in_group.values("id", "email", "first_name", "last_name")),
+    #                 "users_only_this_group": list(users_only_this_group.values("id", "email", "first_name", "last_name")),
+    #             },
+    #             status=status.HTTP_409_CONFLICT
+    #         )
+
+    #     return super().destroy(request, *args, **kwargs)
+
     def destroy(self, request, *args, **kwargs):
         group = self.get_object()
         User = get_user_model()
-
-        users_with_only_this = (
-            User.objects
-            .filter(user_groups=group)
+    
+        # All users in this group
+        users_in_group = User.objects.filter(user_groups=group).distinct()
+    
+        # IDs of users in this group
+        user_ids_in_group = users_in_group.values_list("id", flat=True)
+    
+        # Users who ONLY have this group
+        users_only_this_group = (
+            User.objects.filter(id__in=user_ids_in_group)
             .annotate(group_count=Count('user_groups', distinct=True))
             .filter(group_count=1)
         )
-
-        if users_with_only_this.exists():
-            
+    
+        # Case 1 — Conflict: some users only in this group
+        if users_only_this_group.exists():
             return Response(
-                {"detail": "cannotDeleteGroupBecauseItIsOnlyGroupForSomeUsers"},
+                {
+                    "detail": "cannotDeleteGroupBecauseItIsOnlyGroupForSomeUsers",
+                    "group_id": group.id,
+                    "group_name": group.name,
+                    "users_in_group": list(users_in_group.values("id", "email", "first_name", "last_name")),
+                    "users_only_this_group": list(users_only_this_group.values("id", "email", "first_name", "last_name")),
+                },
                 status=status.HTTP_409_CONFLICT
             )
-        return super().destroy(request, *args, **kwargs)
     
+        # Case 2 — No conflict: send confirmation request before deleting
+        if request.query_params.get("confirm") != "true":
+            return Response(
+                {
+                    "detail": "confirmDeleteGroup",
+                    "group_id": group.id,
+                    "group_name": group.name,
+                    "users_in_group": list(users_in_group.values("id", "email", "first_name", "last_name")),
+                    "message": f"Are you sure you want to delete the group '{group.name}'?"
+                },
+                status=status.HTTP_200_OK
+            )
+    
+        # Case 3 — Confirmation received: delete
+        return super().destroy(request, *args, **kwargs)
+
 class RoleViewSet(BaseModelViewSet):
     """
     API endpoint that allows roles to be viewed or edited
