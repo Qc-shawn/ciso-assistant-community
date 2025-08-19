@@ -7,12 +7,15 @@ from .models import (
     User,
     Role, 
     Permission,
+    Team,
+    UserGroup,
+    RoleAssignment
     )
 
 from rest_framework import serializers
-from .models import Team
 from django.contrib.auth import get_user_model
 from django.contrib.auth.models import Permission
+from django.db import transaction
 
 logger = structlog.get_logger(__name__)
 
@@ -136,26 +139,6 @@ class PersonalAccessTokenReadSerializer(serializers.ModelSerializer):
         fields = ["name", "user", "created", "expiry", "digest"]
 
 # ----------------------------------- CUSTOM ROLES SERIALIZER -----------------------------------
-# class RoleCreateSerializer(serializers.Serializer):
-#     name = serializers.CharField(max_length=255)
-#     permissions = serializers.ListField(
-#         child=serializers.CharField(), required=True
-#     )
-#     def validate_name(self, value):
-#         from iam.models import Role
-#         if Role.objects.filter(name=value).exists():
-#             raise serializers.ValidationError("A role with this name already exists.")
-#         return value
-
-#     def validate_permissions(self, value):
-#         
-#         if not value or len(value) == 0:
-#             raise serializers.ValidationError("A role must have at least one permission.")
-#         perms = Permission.objects.filter(codename__in=value)
-#         if perms.count() != len(value):
-#             raise serializers.ValidationError("Some permissions are invalid.")
-#         return perms
-
 class RoleCreateSerializer(serializers.Serializer):
     name = serializers.CharField(max_length=255, required=True)
     permissions = serializers.ListField(child=serializers.CharField(), required=True)
@@ -208,11 +191,6 @@ class RoleListSerializer(serializers.ModelSerializer):
         return list(obj.permissions.values_list('codename', flat=True))
         
 # ----------------------------- CUSTOM ROLE UPDATE SERIALIZER -----------------------------
-
-from iam.models import UserGroup, RoleAssignment
-
-from django.db import transaction
-
 class RoleUpdateSerializer(serializers.Serializer):
     name = serializers.CharField(required=True)
     permissions = serializers.ListField(

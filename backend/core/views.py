@@ -6077,3 +6077,14 @@ class TaskNodeViewSet(BaseModelViewSet):
         instance: TaskNode = serializer.save()
         instance.save()
         return super().perform_create(serializer)
+
+class BridgeTableViewSet(viewsets.ReadOnlyModelViewSet):
+    """
+    API endpoint to list and retrieve BridgeTable entries.
+    
+    """
+    from core.models import BridgeTable
+    from core.serializers import BridgeTableSerializer
+
+    queryset = BridgeTable.objects.select_related("risk_assessment", "team", "added_by").all()
+    serializer_class = BridgeTableSerializer
