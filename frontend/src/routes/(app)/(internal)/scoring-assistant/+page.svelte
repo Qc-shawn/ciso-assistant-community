@@ -9,10 +9,10 @@
 	let { data, risk_matrices = data.risk_matrices } = $props();
 
 	let risk_matrix_select: Element = $state();
+	let risk_matrix_index = $state(0);
 	let risk_matrix: RiskMatrixJsonDefinition = $derived(risk_matrices[risk_matrix_index] ?? null);
 	let is_business_impact_ignored = $state(false);
 
-	let risk_matrix_index = $state(0);
 
 	let vector: number[] = $state();
 	let vector_string: string = $state();

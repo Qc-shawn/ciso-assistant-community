@@ -4,7 +4,7 @@ import type { PageServerLoad } from './$types';
 import { m } from '$paraglide/messages';
 
 export const load = (async ({ fetch }) => {
-	const endpoint = `${BASE_API_URL}/entity-assessments/metrics/`;
+	const endpoint = `${BASE_API_URL}/organization-evaluations/metrics/`; 
 
 	const res = await fetch(endpoint);
 	const data = await res.json();

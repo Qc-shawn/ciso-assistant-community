@@ -157,7 +157,7 @@
 				source={data.tables['threats']}
 				hideFilters={true}
 				URLModel="threats"
-				baseEndpoint="/threats?risk_scenarios={page.params.id}"
+				baseEndpoint="/threat-landscape?risk_scenarios={page.params.id}"
 			/>
 		</div>
 	</div>
@@ -167,7 +167,7 @@
 			source={data.tables['vulnerabilities']}
 			hideFilters={true}
 			URLModel="vulnerabilities"
-			baseEndpoint="/vulnerabilities?risk_scenarios={page.params.id}"
+			baseEndpoint="/systemvulnerabilities?risk_scenarios={page.params.id}"
 		/>
 	</div>
 	<div class="card px-4 py-2 bg-white shadow-lg max-w-full max-h-96 overflow-y-auto">

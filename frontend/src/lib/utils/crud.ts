@@ -157,6 +157,7 @@ export const URL_MODEL_MAP: ModelMap = {
 		]
 	},
 	perimeters: {
+		endpointUrl:'departments',
 		name: 'perimeter',
 		localName: 'perimeter',
 		localNamePlural: 'perimeters',
@@ -176,6 +177,7 @@ export const URL_MODEL_MAP: ModelMap = {
 		filters: [{ field: 'lc_status' }, { field: 'folder' }, { field: 'campaigns' }]
 	},
 	'risk-matrices': {
+		endpointUrl:'risk-heatmaps',
 		name: 'riskmatrix',
 		localName: 'riskMatrix',
 		localNamePlural: 'riskMatrices',
@@ -187,6 +189,7 @@ export const URL_MODEL_MAP: ModelMap = {
 		]
 	},
 	'risk-assessments': {
+		endpointUrl:'risk-evaluations',
 		name: 'riskassessment',
 		localName: 'riskAssessment',
 		localNamePlural: 'riskAssessments',
@@ -214,6 +217,7 @@ export const URL_MODEL_MAP: ModelMap = {
 		foreignKeyFields: [{ field: 'perimeter', urlModel: 'perimeters' }]
 	},
 	threats: {
+		endpointUrl: 'threat-landscape',
 		name: 'threat',
 		localName: 'threat',
 		localNamePlural: 'threats',
@@ -346,6 +350,7 @@ export const URL_MODEL_MAP: ModelMap = {
 		]
 	},
 	policies: {
+		endpointUrl:'policycenter',
 		name: 'appliedcontrol',
 		localName: 'policy',
 		localNamePlural: 'policies',
@@ -377,6 +382,7 @@ export const URL_MODEL_MAP: ModelMap = {
 		]
 	},
 	vulnerabilities: {
+		endpointUrl: 'systemvulnerabilities',
 		name: 'vulnerability',
 		localName: 'vulnerability',
 		localNamePlural: 'vulnerabilities',
@@ -662,6 +668,7 @@ export const URL_MODEL_MAP: ModelMap = {
 		]
 	},
 	entities: {
+		endpointUrl: 'externalorganizations',
 		name: 'entity',
 		localName: 'entity',
 		localNamePlural: 'entities',
@@ -678,6 +685,7 @@ export const URL_MODEL_MAP: ModelMap = {
 		]
 	},
 	'entity-assessments': {
+		endpointUrl:'organization-evaluations',
 		name: 'entityassessment',
 		localName: 'entityAssessment',
 		localNamePlural: 'entityAssessments',
@@ -698,6 +706,7 @@ export const URL_MODEL_MAP: ModelMap = {
 		filters: [{ field: 'status' }]
 	},
 	solutions: {
+		endpointUrl:'remediationplans',
 		name: 'solution',
 		localName: 'solution',
 		localNamePlural: 'solutions',
@@ -710,6 +719,7 @@ export const URL_MODEL_MAP: ModelMap = {
 		]
 	},
 	representatives: {
+		endpointUrl:'externalstakeholders',
 		name: 'representative',
 		localName: 'representative',
 		localNamePlural: 'representatives',
@@ -1219,6 +1229,7 @@ export const URL_MODEL_MAP: ModelMap = {
 		]
 	},
 	'findings-assessments': {
+		endpointUrl:'issue-trackers',
 		name: 'findingsassessment',
 		localName: 'findingsAssessment',
 		localNamePlural: 'findingsAssessments',
@@ -1239,6 +1250,7 @@ export const URL_MODEL_MAP: ModelMap = {
 		selectFields: [{ field: 'status' }, { field: 'category' }]
 	},
 	findings: {
+		endpointUrl:'issues',
 		name: 'finding',
 		localName: 'finding',
 		localNamePlural: 'findings',
@@ -1258,6 +1270,7 @@ export const URL_MODEL_MAP: ModelMap = {
 		selectFields: [{ field: 'severity', valueType: 'number' }, { field: 'status' }]
 	},
 	incidents: {
+		endpointUrl: 'occurrences',
 		name: 'incident',
 		localName: 'incident',
 		localNamePlural: 'incidents',
@@ -1291,6 +1304,7 @@ export const URL_MODEL_MAP: ModelMap = {
 		reverseForeignKeyFields: [{ field: 'timeline_entries', urlModel: 'evidences' }]
 	},
 	'task-templates': {
+		endpointUrl:'action-centers',
 		name: 'tasktemplate',
 		localName: 'taskTemplate',
 		localNamePlural: 'taskTemplates',

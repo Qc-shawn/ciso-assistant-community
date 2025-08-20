@@ -85,6 +85,7 @@
 		/>
 	{/if}
 {/if}
+<!-- xxx -->
 <AutocompleteSelect
 	{form}
 	optionsEndpoint="entities"

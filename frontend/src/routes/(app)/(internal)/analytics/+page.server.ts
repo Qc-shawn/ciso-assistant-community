@@ -10,7 +10,7 @@ export const load: PageServerLoad = async ({ locals, fetch }) => {
 	const req_applied_control_status = await fetch(`${BASE_API_URL}/applied-controls/per_status/`);
 	const applied_control_status = await req_applied_control_status.json();
 
-	const riskAssessmentsPerStatus = await fetch(`${BASE_API_URL}/risk-assessments/per_status/`)
+	const riskAssessmentsPerStatus = await fetch(`${BASE_API_URL}/risk-evaluations/per_status/`)
 		.then((res) => res.json())
 		.then((res) => res.results);
 	const complianceAssessmentsPerStatus = await fetch(
@@ -44,7 +44,7 @@ export const load: PageServerLoad = async ({ locals, fetch }) => {
 	};
 
 	const usedRiskMatrices: { id: string; name: string; risk_assessments_count: number }[] =
-		await fetch(`${BASE_API_URL}/risk-matrices/used/`)
+		await fetch(`${BASE_API_URL}/risk-heatmaps/used/`)
 			.then((res) => res.json())
 			.then((res) => res.results);
 	const usedFrameworks: { id: string; name: string; compliance_assessments_count: number }[] =
@@ -60,11 +60,11 @@ export const load: PageServerLoad = async ({ locals, fetch }) => {
 		inherent?: Record<string, any>[];
 	} = await req_get_risks_count_per_level.json().then((res) => res.results);
 
-	const threats_count = await fetch(`${BASE_API_URL}/threats/threats_count/`).then((res) =>
+	const threats_count = await fetch(`${BASE_API_URL}/threat-landscape/threats_count/`).then((res) =>
 		res.json()
 	);
 
-	const req_risk_assessments = await fetch(`${BASE_API_URL}/risk-assessments/`);
+	const req_risk_assessments = await fetch(`${BASE_API_URL}/risk-evaluations/`);
 	const risk_assessments = await req_risk_assessments.json();
 
 	const composerForm = await superValidate(zod(composerSchema));

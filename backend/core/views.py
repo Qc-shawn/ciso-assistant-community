@@ -4631,6 +4631,8 @@ class ComplianceAssessmentViewSet(BaseModelViewSet):
                 lang = "en"
         template_path = (
             Path(settings.BASE_DIR)
+            Path(settings.BASE_DIR).parent.parent
+            / "backend"
             / "core"
             / "templates"
             / "core"

@@ -796,7 +796,7 @@ export const listViewFields = {
 			folder: DOMAIN_FILTER,
 			provider: {
 				...PROVIDER_FILTER,
-				props: { ...PROVIDER_FILTER.props, optionsEndpoint: 'threats/provider' }
+				props: { ...PROVIDER_FILTER.props, optionsEndpoint: 'threat-landscape/provider' }
 			},
 			filtering_labels: LABELS_FILTER
 		}

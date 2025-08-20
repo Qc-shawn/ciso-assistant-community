@@ -4,7 +4,7 @@ import type { PageServerLoad } from './$types';
 import { m } from '$paraglide/messages';
 
 export const load: PageServerLoad = async ({ fetch }) => {
-	const req = await fetch(`${BASE_API_URL}/risk-matrices/`);
+	const req = await fetch(`${BASE_API_URL}/risk-heatmaps/`);
 	const req_data = await req.json();
 
 	const risk_matrices: RiskMatrixJsonDefinition[] = req_data.results.map(
