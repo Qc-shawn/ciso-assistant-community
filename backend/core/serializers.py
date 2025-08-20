@@ -287,6 +287,19 @@ class RiskAssessmentWriteSerializer(BaseModelSerializer):
         model = RiskAssessment
         exclude = ["created_at", "updated_at"]
 
+    def validate_teams(self, team_ids):
+        """
+        Ensure all provided team IDs exist in the database.
+        """
+        existing_ids = set(Team.objects.filter(id__in=team_ids).values_list("id", flat=True))
+        invalid_ids = set(team_ids) - existing_ids
+
+        if invalid_ids:
+            raise serializers.ValidationError(
+                {"teams": [f"Invalid team IDs: {', '.join(map(str, invalid_ids))}"]}
+            )
+        return team_ids
+
     def create(self, validated_data):
         team_ids = validated_data.pop("teams", [])
         risk_assessment = super().create(validated_data)

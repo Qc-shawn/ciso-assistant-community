@@ -25,8 +25,6 @@ from django.db.models import (
 )
 from django.db.models.functions import Greatest, Coalesce
 from django.db.models import Count
-
-
 from collections import defaultdict
 import pytz
 from uuid import UUID
@@ -88,6 +86,7 @@ from rest_framework.parsers import (
 from rest_framework.renderers import JSONRenderer
 from rest_framework.request import Request
 from rest_framework.response import Response
+from rest_framework import status
 from rest_framework.utils.serializer_helpers import ReturnDict
 from rest_framework.views import APIView
 from rest_framework.exceptions import PermissionDenied
@@ -102,8 +101,11 @@ from core.models import (
     RequirementMappingSet,
     RiskAssessment,
     AssetClass,
+    BridgeTable,
+    Perimeter, 
+    RiskAssessment
 )
-from core.serializers import ComplianceAssessmentReadSerializer
+from core.serializers import (ComplianceAssessmentReadSerializer)
 from core.utils import (
     compare_schema_versions,
     _generate_occurrences,
@@ -426,10 +428,19 @@ class PerimeterViewSet(BaseModelViewSet):
                 ).data,
                 "quality_check": compliance_assessment.quality_check(),
             }
-        for risk_assessment in RiskAssessment.objects.filter(perimeter__in=perimeters):
-            res[str(risk_assessment.perimeter.id)]["risk_assessments"]["objects"][
-                str(risk_assessment.id)
-            ] = {
+            # ---------------
+        user_teams = request.user.teams.all()
+        for risk_assessment in RiskAssessment.objects.filter(
+            Q(perimeter__in=perimeters) |
+            Q(id__in=BridgeTable.objects.filter(team__in=user_teams).values("risk_assessment_id"))
+        ).distinct():
+            perimeter_id = str(risk_assessment.perimeter.id)
+        
+            # Ensure the perimeter entry exists
+            if perimeter_id not in res:
+                res[perimeter_id] = {"risk_assessments": {"objects": {}}}
+        
+            res[perimeter_id]["risk_assessments"]["objects"][str(risk_assessment.id)] = {
                 "object": RiskAssessmentReadSerializer(risk_assessment).data,
                 "quality_check": risk_assessment.quality_check(),
             }
@@ -961,6 +972,19 @@ class RiskAssessmentViewSet(BaseModelViewSet):
         "authors",
         "reviewers",
     ]
+
+    def get_queryset(self):
+        user = self.request.user
+
+        # If admin / superuser, return all
+        if user.is_superuser or user.is_staff:
+            return RiskAssessment.objects.all()
+
+        # Otherwise, restrict by BridgeTable teams
+        user_teams = user.teams.all()
+        return RiskAssessment.objects.filter(
+            id__in=BridgeTable.objects.filter(team__in=user_teams).values("risk_assessment_id")
+        ).distinct()
 
     def perform_create(self, serializer):
         instance: RiskAssessment = serializer.save()
@@ -6083,8 +6107,5 @@ class BridgeTableViewSet(viewsets.ReadOnlyModelViewSet):
     API endpoint to list and retrieve BridgeTable entries.
     
     """
-    from core.models import BridgeTable
-    from core.serializers import BridgeTableSerializer
-
     queryset = BridgeTable.objects.select_related("risk_assessment", "team", "added_by").all()
     serializer_class = BridgeTableSerializer

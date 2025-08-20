@@ -45,6 +45,8 @@ from .validators import (
     JSONSchemaInstanceValidator,
 )
 from collections import defaultdict
+from django.conf import settings
+import uuid
 
 logger = get_logger(__name__)
 
@@ -5130,10 +5132,7 @@ class TaskNode(AbstractBaseModel, FolderMixin):
 
 common_exclude = ["created_at", "updated_at"]
 
-
 class BridgeTable(models.Model):
-    from django.conf import settings
-    import uuid
     """
     Explicit join table between RiskAssessment and Team.
     Allows storing extra details about the relation.
