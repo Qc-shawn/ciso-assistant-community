@@ -54,7 +54,7 @@ urlpatterns = [
     path("custom-role/", RoleCreateView.as_view(), name="custom-role"),
     path("available-permissions/", PermissionGroupsView.as_view(), name="available-permissions"),
     path("custom-role/list/", RoleListView.as_view(), name="custom-role-list"),
-    path("custom-role/<uuid:id>/", RoleUpdateView.as_view(), name="custom-role-update"),
+    # path("custom-role/<uuid:id>/", RoleUpdateView.as_view(), name="custom-role-update"),
     
     # =============================== TEAM ================================
     path('create-teams/', TeamCreateView.as_view(), name='create-team'),

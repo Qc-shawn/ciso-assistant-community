@@ -270,11 +270,51 @@ class PerimeterImportExportSerializer(BaseModelSerializer):
         ]
 
 
+from rest_framework import serializers
+from core.models import RiskAssessment, BridgeTable
+from iam.models import Team
+
+
 class RiskAssessmentWriteSerializer(BaseModelSerializer):
+    # Accept teams as a list of UUIDs (instead of a ManyToManyField)
+    teams = serializers.ListField(
+        child=serializers.UUIDField(),
+        write_only=True,
+        required=True
+    )
+
     class Meta:
         model = RiskAssessment
         exclude = ["created_at", "updated_at"]
 
+    def create(self, validated_data):
+        team_ids = validated_data.pop("teams", [])
+        risk_assessment = super().create(validated_data)
+
+        for team_id in team_ids:
+            BridgeTable.objects.create(
+                risk_assessment=risk_assessment,
+                team=Team.objects.get(id=team_id),
+                added_by=self.context["request"].user
+            )
+
+        return risk_assessment
+
+    def update(self, instance, validated_data):
+        team_ids = validated_data.pop("teams", [])
+        risk_assessment = super().update(instance, validated_data)
+
+        # Clear old entries
+        BridgeTable.objects.filter(risk_assessment=risk_assessment).delete()
+
+        for team_id in team_ids:
+            BridgeTable.objects.create(
+                risk_assessment=risk_assessment,
+                team=Team.objects.get(id=team_id),
+                added_by=self.context["request"].user
+            )
+
+        return risk_assessment
 
 class RiskAssessmentDuplicateSerializer(BaseModelSerializer):
     class Meta:
@@ -291,11 +331,20 @@ class RiskAssessmentReadSerializer(AssessmentReadSerializer):
     risk_scenarios_count = serializers.IntegerField(source="risk_scenarios.count")
     risk_matrix = FieldsRelatedField()
     ebios_rm_study = FieldsRelatedField(["id", "name"])
+    teams = serializers.SerializerMethodField()
 
+    def get_teams(self, obj):
+        return [
+            {
+                "id": entry.team.id,
+                "name": entry.team.name,
+                "assigned_at": entry.assigned_at,
+            }
+            for entry in obj.bridge_entries.all()
+        ]
     class Meta:
         model = RiskAssessment
         exclude = []
-
 
 class RiskAssessmentImportExportSerializer(BaseModelSerializer):
     risk_matrix = serializers.SlugRelatedField(slug_field="urn", read_only=True)
@@ -322,6 +371,9 @@ class RiskAssessmentImportExportSerializer(BaseModelSerializer):
             "created_at",
             "updated_at",
         ]
+        extra_kwargs = {
+            "teams": {"required": True}
+        }
 
 
 class AssetWriteSerializer(BaseModelSerializer):
@@ -1785,3 +1837,35 @@ class TaskNodeWriteSerializer(BaseModelSerializer):
     class Meta:
         model = TaskNode
         exclude = ["task_template"]
+
+
+class BridgeTableSerializer(serializers.ModelSerializer):
+    from core.models import BridgeTable
+    risk_assessment = serializers.SerializerMethodField()
+    team = serializers.SerializerMethodField()
+    added_by = serializers.SerializerMethodField()
+
+    class Meta:
+        model = BridgeTable
+        fields = ["id", "risk_assessment", "team", "assigned_at", "added_by"]
+
+    def get_risk_assessment(self, obj):
+        return {
+            "id": obj.risk_assessment.id,
+            "name": obj.risk_assessment.name,
+        }
+
+    def get_team(self, obj):
+        return {
+            "id": obj.team.id,
+            "name": obj.team.name,
+        }
+
+    def get_added_by(self, obj):
+        if obj.added_by:
+            return {
+                "id": obj.added_by.id,
+                "username": obj.added_by.first_name,
+                "email": obj.added_by.email,
+            }
+        return None
