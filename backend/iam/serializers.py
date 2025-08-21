@@ -362,7 +362,7 @@ class TeamListSerializer(serializers.ModelSerializer):
 
     def get_users(self, obj):
         return [
-            {"id": str(user.id), "user email": user.username}
+            {"id": str(user.id), "name":user.first_name ,"user email": user.username}
             for user in obj.users.all()
         ]
 

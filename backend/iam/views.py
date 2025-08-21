@@ -12,7 +12,7 @@ from django.utils.translation import gettext_lazy as _
 from django.views.decorators.csrf import ensure_csrf_cookie
 from django.db import transaction
 from collections import defaultdict
-
+from django.shortcuts import get_object_or_404
 from ciso_assistant.settings import EMAIL_HOST, EMAIL_HOST_RESCUE
 
 from knox import crypto
@@ -52,7 +52,8 @@ from .models import (
     Role, 
     RoleAssignment,
     UserGroup,
-    Team
+    Team,
+    User
 )
 
 from .serializers import (
@@ -416,118 +417,6 @@ class SetPasswordView(views.APIView):
 
 # ---------------------------------------------------- CUSTOM ROLES VIEWS----------------------------------------------------
 
-# class RoleCreateView(GenericAPIView):
-#     serializer_class = RoleCreateSerializer
-#     @swagger_auto_schema(
-#         operation_description="Create a new role, assign permissions, and auto-generate user groups and role assignments for all folders.",
-#         request_body=RoleCreateSerializer,
-#         responses={201: openapi.Response("Role created")},
-#     )
-#     def post(self, request):
-#         serializer = self.get_serializer(data=request.data)
-#         serializer.is_valid(raise_exception=True)
-    
-#         from iam.models import Folder, Role, UserGroup, RoleAssignment
-    
-#         # 1) Create the Role
-#         role = Role.objects.create(
-#             name=serializer.validated_data["name"],
-#             builtin=False,
-#             is_published=True
-#         )
-    
-#         # 2) Assign Permissions (validated to a queryset)
-#         permissions = serializer.validated_data.get("permissions")
-#         if permissions:
-#             role.permissions.set(permissions)
-    
-#         # 2b) Persist the scope on the role so future domains behave correctly
-#         apply_all   = serializer.validated_data.get("apply_to_all_companies", False)
-#         select_some = serializer.validated_data.get("select_specific_companies", False)
-#         role.auto_apply_to_new_companies = bool(apply_all)
-#         role.save(update_fields=["auto_apply_to_new_companies"])
-    
-#         # 3) Optional scope: create UserGroups + RoleAssignments
-#         root = Folder.get_root_folder()
-#         company_ids = serializer.validated_data.get("company_ids") or []
-#         created_assignments = []
-    
-#         # Determine target companies (Folders with content_type=DOMAIN)
-#         companies_qs = None
-#         if apply_all:
-#             companies_qs = Folder.objects.filter(content_type=Folder.ContentType.DOMAIN)
-#         elif select_some:
-#             companies_qs = Folder.objects.filter(
-#                 id__in=company_ids,
-#                 content_type=Folder.ContentType.DOMAIN
-#             )
-    
-#         # --- Per-company assignments ---
-#         if companies_qs is not None:
-#             for company in companies_qs:
-#                 group, _ = UserGroup.objects.get_or_create(
-#                     name=role.name,
-#                     folder=company,
-#                     defaults={"builtin": False}
-#                 )
-#                 ra, _ = RoleAssignment.objects.get_or_create(
-#                     user_group=group,
-#                     role=role,
-#                     folder=root,
-#                     defaults={"is_recursive": True},
-#                 )
-#                 ra.perimeter_folders.add(company)
-#                 ra.is_recursive = True
-#                 ra.name = role.name
-#                 ra.save(update_fields=["is_recursive", "name"])
-    
-#                 created_assignments.append({
-#                     "company_id": str(company.id),
-#                     "company": company.name,
-#                     "user_group": group.name
-#                 })
-    
-#         # --- Global assignment (always runs if apply_all=True) ---
-#         if apply_all:
-#             try:
-#                 global_folder = Folder.objects.get(content_type=Folder.ContentType.ROOT)
-    
-#                 group, _ = UserGroup.objects.get_or_create(
-#                     name=role.name,
-#                     folder=global_folder,
-#                     defaults={"builtin": False}
-#                 )
-    
-#                 ra, _ = RoleAssignment.objects.get_or_create(
-#                     user_group=group,
-#                     role=role,
-#                     folder=global_folder,
-#                     defaults={"is_recursive": True},
-#                 )
-#                 ra.perimeter_folders.set([global_folder])
-#                 ra.is_recursive = True
-#                 ra.name = role.name
-#                 ra.save(update_fields=["is_recursive", "name"])
-    
-#                 created_assignments.append({
-#                     "company_id": str(global_folder.id),
-#                     "company": global_folder.name,
-#                     "user_group": group.name
-#                 })
-#             except Folder.DoesNotExist:
-#                 pass
-            
-#         # 4) Response
-#         return Response(
-#             {
-#                 "id": str(role.id),
-#                 "name": role.name,
-#                 "permissions": list(role.permissions.values_list("codename", flat=True)),
-#                 "assignments_created": created_assignments,
-#             },
-#             status=status.HTTP_201_CREATED
-#         )
-
 logger = logging.getLogger(__name__)
 
 class RoleCreateView(GenericAPIView):
@@ -814,13 +703,12 @@ class TeamCreateView(CreateAPIView):
         }, status=status.HTTP_201_CREATED)
 
 # ------------------------------------------------ UPDATE TEAM VIEW ------------------------------------------------
-from django.shortcuts import get_object_or_404
 class TeamUpdateView(UpdateAPIView):
     queryset = Team.objects.all()
     serializer_class = TeamUpdateSerializer
     lookup_field = "id"
     permission_classes = [IsAuthenticated]
-
+    http_method_names = ['put', 'get']
     def update(self, request, *args, **kwargs):
         # 1. Ensure team exists
         team = get_object_or_404(Team, id=kwargs.get("id"))
@@ -846,19 +734,110 @@ class TeamUpdateView(UpdateAPIView):
         )
     
 # -------------------------------------------------- TEAM DELETE VIEW ------------------------------------------------
+
 class TeamDeleteView(DestroyAPIView):
     queryset = Team.objects.all()
-    lookup_field = "id" 
+    lookup_field = "id"
     permission_classes = [IsAuthenticated]
-    
+
     def delete(self, request, *args, **kwargs):
-        team = self.get_object()
-        team_id = str(team.id)
-        team.delete()
-        return Response(
-            {"message": f"Team {team_id} deleted."},
-            status=status.HTTP_204_NO_CONTENT
-        )
+        team = team = self.get_object()
+
+        # Step 1: Check for users who only belong to this team
+        blocking_users = []
+        for user in team.users.all():
+            if user.teams.count() == 1:  # only this team
+                blocking_users.append(user.username)
+
+        if blocking_users:
+            return Response(
+                {
+                    "error": "Cannot delete team",
+                    "details": f"Users {', '.join(blocking_users)} belong only to this team."
+                },
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+
+        # Step 2: Require confirmation
+        confirm = request.query_params.get("confirm", "false").lower()
+        if confirm != "true":
+            return Response(
+                {
+                    "message": "Are you sure you want to delete this team?",
+                },
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+
+        # Step 3: Perform delete safely in transaction
+        try:
+            with transaction.atomic():
+                team.delete()
+            return Response(
+                {"success": f"Team '{team.name}' deleted successfully."},
+                status=status.HTTP_200_OK,
+            )
+        except Exception as e:
+            return Response(
+                {"error": "Delete failed", "details": str(e)},
+                status=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            )
+
+
+class RemoveTeamMemberView(APIView):
+    """
+    Remove a member from a team with safety checks.
+    """
+
+    def delete(self, request, team_id, user_id, *args, **kwargs):
+        # Step 1: Check team exists
+        try:
+            team = Team.objects.get(id=team_id)
+        except Team.DoesNotExist:
+            return Response(
+                {"error": f"Team with id {team_id} not found."},
+                status=status.HTTP_404_NOT_FOUND,
+            )
+
+        # Step 2: Check user exists
+        try:
+            user = User.objects.get(id=user_id)
+        except User.DoesNotExist:
+            return Response(
+                {"error": f"User with id {user_id} not found."},
+                status=status.HTTP_404_NOT_FOUND,
+            )
+
+        # Step 3: Ensure user is in team
+        if user not in team.users.all():
+            return Response(
+                {"error": f"User {user.username} is not in team {team.name}."},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+
+        # Step 5: Require confirmation
+        confirm = request.query_params.get("confirm", "false").lower()
+        if confirm != "true":
+            return Response(
+                {
+                    "message": f"Are you sure you want to remove user {user.first_name} with email {user.email} from {team.name}?",  
+                },
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+
+        # Step 6: Perform removal
+        try:
+            with transaction.atomic():
+                team.users.remove(user)
+            return Response(
+                {"success": f"User {user.username} removed from team {team.name}."},
+                status=status.HTTP_200_OK,
+            )
+        except Exception as e:
+            return Response(
+                {"error": "Failed to remove user from team", "details": str(e)},
+                status=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            )
+    
 # ---------------------------------------------------- TEAM LIST VIEW ------------------------------------------------
 class TeamListView(ListAPIView):
     queryset = Team.objects.all()
