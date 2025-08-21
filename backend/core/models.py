@@ -45,6 +45,8 @@ from .validators import (
     JSONSchemaInstanceValidator,
 )
 from collections import defaultdict
+from django.conf import settings
+import uuid
 
 logger = get_logger(__name__)
 
@@ -3110,6 +3112,14 @@ class RiskAssessment(Assessment):
         related_name="risk_assessments",
     )
 
+# ------------------------TEAMS----------------------
+    from iam.models import Team
+    teams = models.ManyToManyField(
+        Team,
+        related_name="risk_assessments",
+        verbose_name=_("Teams"),
+    )
+# ------------------------XXX------------------------
     class Meta:
         verbose_name = _("Risk assessment")
         verbose_name_plural = _("Risk assessments")
@@ -5237,6 +5247,44 @@ class TaskNode(AbstractBaseModel, FolderMixin):
 
 
 common_exclude = ["created_at", "updated_at"]
+
+class BridgeTable(models.Model):
+    """
+    Explicit join table between RiskAssessment and Team.
+    Allows storing extra details about the relation.
+    """
+
+    id = models.UUIDField(primary_key=True, default=uuid.uuid4, editable=False)
+
+    risk_assessment = models.ForeignKey(
+        "core.RiskAssessment",
+        on_delete=models.CASCADE,
+        related_name="bridge_entries"
+    )
+
+    team = models.ForeignKey(
+        "iam.Team",
+        on_delete=models.CASCADE,
+        related_name="bridge_entries"
+    )
+
+    assigned_at = models.DateTimeField(auto_now_add=True)
+
+    added_by = models.ForeignKey(
+        settings.AUTH_USER_MODEL,
+        null=True,
+        blank=True,
+        on_delete=models.SET_NULL,
+        related_name="created_bridge_entries"
+    )
+
+    class Meta:
+        unique_together = ("risk_assessment", "team")
+        verbose_name = "Bridge Entry"
+        verbose_name_plural = "Bridge Entries"
+
+    def __str__(self):
+        return f"{self.team.name} ↔ {self.risk_assessment.name}"
 
 auditlog.register(
     ReferenceControl,

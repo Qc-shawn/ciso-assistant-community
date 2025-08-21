@@ -1,45 +1,84 @@
 from base64 import urlsafe_b64decode
 from datetime import timedelta
 
+import logging
 import structlog
-from allauth.account.models import EmailAddress
 from django.contrib.auth import get_user_model, login, logout
+from django.contrib.auth.models import Permission
 from django.contrib.auth.tokens import PasswordResetTokenGenerator
 from django.utils import timezone
 from django.utils.decorators import method_decorator
 from django.utils.translation import gettext_lazy as _
 from django.views.decorators.csrf import ensure_csrf_cookie
+from django.db import transaction
+from collections import defaultdict
+from django.shortcuts import get_object_or_404
+from ciso_assistant.settings import EMAIL_HOST, EMAIL_HOST_RESCUE
+
 from knox import crypto
 from knox.auth import TokenAuthentication, get_token_model, knox_settings
-from knox.models import AuthToken
 from knox.views import DateTimeField
 from knox.views import LoginView as KnoxLoginView
+from knox.models import AuthToken
+from allauth.account.models import EmailAddress
+
+from drf_yasg.utils import swagger_auto_schema
+from drf_yasg import openapi
+
 from rest_framework import permissions, serializers, status, views
 from rest_framework.authtoken.serializers import AuthTokenSerializer
 from rest_framework.response import Response
+from rest_framework.permissions import IsAuthenticated
+from rest_framework.views import APIView
+from rest_framework import status
+
 from rest_framework.status import (
     HTTP_200_OK,
     HTTP_202_ACCEPTED,
     HTTP_401_UNAUTHORIZED,
     HTTP_500_INTERNAL_SERVER_ERROR,
 )
+from rest_framework.generics import (
+    UpdateAPIView,  
+    ListAPIView,
+    DestroyAPIView,
+    GenericAPIView,
+    CreateAPIView,
+    )
 
-from ciso_assistant.settings import EMAIL_HOST, EMAIL_HOST_RESCUE
+from .models import (
+    Folder, 
+    PersonalAccessToken, 
+    Role, 
+    RoleAssignment,
+    UserGroup,
+    Team,
+    User
+)
 
-from .models import Folder, PersonalAccessToken, Role, RoleAssignment
 from .serializers import (
     ChangePasswordSerializer,
     LoginSerializer,
     PersonalAccessTokenReadSerializer,
     ResetPasswordConfirmSerializer,
     SetPasswordSerializer,
+    TeamUpdateSerializer,
+    TeamListSerializer,
+    RoleCreateSerializer,
+    RoleUpdateSerializer, 
+    RoleListSerializer,
+    TeamCreateSerializer
+
+)
+
+from core.startup import (
+    READER_PERMISSIONS_LIST, APPROVER_PERMISSIONS_LIST, ANALYST_PERMISSIONS_LIST,
+    DOMAIN_MANAGER_PERMISSIONS_LIST, ADMINISTRATOR_PERMISSIONS_LIST, THIRD_PARTY_RESPONDENT_PERMISSIONS_LIST
 )
 
 logger = structlog.get_logger(__name__)
 
 User = get_user_model()
-
-
 class LoginView(KnoxLoginView):
     permission_classes = (permissions.AllowAny,)
     serializer_class = LoginSerializer
@@ -50,8 +89,6 @@ class LoginView(KnoxLoginView):
         user = serializer.validated_data["user"]
         login(request, user)
         return super(LoginView, self).post(request, format=None)
-
-
 class LogoutView(views.APIView):
     permission_classes = [permissions.IsAuthenticated]
 
@@ -82,8 +119,6 @@ class LogoutView(views.APIView):
         except Exception as e:
             logger.error("logout failed", user=request.user, error=e)
         return Response({"message": "Logged out successfully."}, status=HTTP_200_OK)
-
-
 class PersonalAccessTokenViewSet(views.APIView):
     def get_queryset(self):
         return PersonalAccessToken.objects.filter(auth_token__user=self.request.user)
@@ -191,8 +226,6 @@ class AuthTokenDetailView(views.APIView):
                 {"error": "Failed to delete token due to an internal error."},
                 status=status.HTTP_500_INTERNAL_SERVER_ERROR,
             )
-
-
 class CurrentUserView(views.APIView):
     # Is this condition really necessary if we have permission_classes = [permissions.IsAuthenticated] ?
     permission_classes = [permissions.IsAuthenticated]
@@ -381,3 +414,432 @@ class SetPasswordView(views.APIView):
                 )
             return Response(status=status.HTTP_200_OK)
         return Response(status=status.HTTP_401_UNAUTHORIZED)
+
+# ---------------------------------------------------- CUSTOM ROLES VIEWS----------------------------------------------------
+
+logger = logging.getLogger(__name__)
+
+class RoleCreateView(GenericAPIView):
+    serializer_class = RoleCreateSerializer
+    permission_classes = [IsAuthenticated]
+
+    @swagger_auto_schema(
+        operation_description="Create a new role, assign permissions, and generate user groups and role assignments.",
+        request_body=RoleCreateSerializer,
+        responses={201: openapi.Response("Role created")},
+    )
+    @transaction.atomic
+    def post(self, request):
+        serializer = self.get_serializer(data=request.data)
+        serializer.is_valid(raise_exception=True)
+
+        apply_all   = serializer.validated_data.get("apply_to_all_companies", False)
+        select_some = serializer.validated_data.get("select_specific_companies", False)
+        company_ids = serializer.validated_data.get("company_ids") or []
+
+        # Validation: ensure consistency
+        if select_some and not company_ids:
+            return Response(
+                {"detail": "Must provide company_ids when select_specific_companies=True"},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+
+        # 1) Create the Role
+        role = Role.objects.create(
+            name=serializer.validated_data["name"],
+            builtin=False,
+            is_published=True,
+            auto_apply_to_new_companies=bool(apply_all)
+        )
+
+        # 2) Assign Permissions
+        permissions = serializer.validated_data.get("permissions")
+        if permissions:
+            role.permissions.set(permissions)
+
+        root = Folder.get_root_folder()
+        created_assignments = []
+
+        # 3) Determine companies
+        companies_qs = None
+        if apply_all:
+            companies_qs = Folder.objects.filter(content_type=Folder.ContentType.DOMAIN)
+        elif select_some:
+            companies_qs = Folder.objects.filter(
+                id__in=company_ids,
+                content_type=Folder.ContentType.DOMAIN
+            )
+
+        if companies_qs is not None:
+            for company in companies_qs:
+                group, _ = UserGroup.objects.get_or_create(
+                    name=role.name,
+                    folder=company,
+                    defaults={"builtin": False}
+                )
+                ra, _ = RoleAssignment.objects.get_or_create(
+                    user_group=group,
+                    role=role,
+                    folder=root,
+                    defaults={"is_recursive": True},
+                )
+                ra.perimeter_folders.add(company)
+                ra.is_recursive = True
+                ra.name = role.name
+                ra.save(update_fields=["is_recursive", "name"])
+
+                created_assignments.append({
+                    "company_id": str(company.id),
+                    "company": company.name,
+                    "user_group": group.name
+                })
+
+        # 4) Global assignment (if apply_all=True)
+        if apply_all:
+            try:
+                global_folder = Folder.objects.get(content_type=Folder.ContentType.ROOT)
+                group, _ = UserGroup.objects.get_or_create(
+                    name=role.name,
+                    folder=global_folder,
+                    defaults={"builtin": False}
+                )
+                ra, _ = RoleAssignment.objects.get_or_create(
+                    user_group=group,
+                    role=role,
+                    folder=global_folder,
+                    defaults={"is_recursive": True},
+                )
+                ra.perimeter_folders.set([global_folder])
+                ra.is_recursive = True
+                ra.name = role.name
+                ra.save(update_fields=["is_recursive", "name"])
+
+                created_assignments.append({
+                    "company_id": str(global_folder.id),
+                    "company": global_folder.name,
+                    "user_group": group.name
+                })
+            except Folder.DoesNotExist:
+                logger.warning("Global root folder not found during role creation.")
+
+        # 5) Audit log
+        logger.info(
+            "Role '%s' (id=%s) created by user=%s with %d assignments.",
+            role.name, role.id, request.user.username, len(created_assignments)
+        )
+
+        # 6) Response
+        return Response(
+            {
+                "id": str(role.id),
+                "name": role.name,
+                "permissions": list(role.permissions.values_list("codename", flat=True)),
+                "assignments_created": created_assignments,
+            },
+            status=status.HTTP_201_CREATED
+        )
+
+# ------------------------------------------------PERMISSIONS------------------------------------------------
+
+PARENT_MAPPING = {
+    # "overview": [
+    #     "analytics", "myassignments"   # frontend-only, no Django perms
+    # ],
+
+    "organization": [
+        "folder", "perimeter", "user",
+        "usergroup", "roleassignment"
+    ],
+
+    "catalog": [
+        "framework", "threat", "referencecontrol",
+        "requirementmapping", "requirementmappingset",
+        "requirementnode", "riskmatrix"
+    ],
+
+    "assetsManagement": [
+        "asset", "businessimpactanalysis",
+        "assetassessment", "escalationthreshold", "assetclass"
+    ],
+
+    "operations": [
+        # "calendar", "xray",
+        "appliedcontrol", 
+        "incident", "timelineentry", "tasknode", "tasktemplate"
+    ],
+
+    "governance": [
+        "loadedlibrary", "storedlibrary",
+        "policy", "riskacceptance",
+        "securityexception", "finding", "findingsassessment"
+    ],
+
+    "risk": [
+        "riskassessment", "ebiosrmstudy", "riskscenario",
+        "fearedevent", "roto", "stakeholder", "strategicscenario",
+        "attackpath", "operationalscenario", "qualification", "vulnerability"
+    ],
+
+    "compliance": [
+        "complianceassessment", "evidence", "campaign"
+    ],
+
+    "thirdPartyCategory": [
+        "entity", "entityassessment", "representative", "solution"
+    ],
+
+    "privacy": [
+        "processing", "processingnature", "purpose",
+        "personaldata", "datasubject", "datarecipient",
+        "datacontractor", "datatransfer"
+    ],
+
+    "extra": [
+        "globalsettings", "ssosettings",
+        "filteringlabel",
+        "event", "logentry",
+        # "backuprestore", "auditlog" 
+    ],
+
+    "insight": [
+        # frontend-only, no Django perms
+    ]
+}
+class PermissionGroupsView(APIView):
+    """
+    Return all permissions grouped by parent/child screen.
+    Extra permissions (not tied to any known screen) are listed under 'extra_permissions'.
+    """
+
+    def get(self, request):
+        response = defaultdict(dict)
+        extras = []
+
+        try:
+            permissions = list(Permission.objects.values_list("codename", flat=True))
+        except Exception as e:
+            logger.error(f"Failed to fetch permissions: {e}")
+            permissions = []
+
+        matched = set()
+
+        for parent, children in PARENT_MAPPING.items():
+            response[parent] = {}
+
+            for child in children:
+                try:
+                    child_key = child.lower().strip()
+                    child_perms = []
+
+                    for p in permissions:
+                        if not p or "_" not in p:
+                            continue
+                        try:
+                            _, model = p.split("_", 1)
+                        except ValueError:
+                            continue
+
+                        if model == child_key:
+                            child_perms.append(p)
+                            matched.add(p)
+
+                    response[parent][child] = sorted(set(child_perms))
+
+                except Exception as e:
+                    logger.error(f"Error processing child '{child}' in '{parent}': {e}")
+                    response[parent][child] = []
+
+        # Collect extra permissions not mapped to any child
+        for p in permissions:
+            if p not in matched:
+                extras.append(p)
+
+        if extras:
+            response["extra_permissions"] = sorted(set(extras))
+
+        return Response(dict(response))
+
+# ------------------------------------------------ UPDATE ROLE ------------------------------------------------
+
+class RoleUpdateView(UpdateAPIView):
+    queryset = Role.objects.all()
+    serializer_class = RoleUpdateSerializer
+    lookup_field = "id"
+    http_method_names = ['put']
+
+    def get_object(self):
+        return Role.objects.get(id=self.kwargs['id'])
+
+# ------------------------------------------------ XXXXXXXXXXXXXX ------------------------------------------------
+class RoleListView(ListAPIView):
+    queryset = Role.objects.filter(builtin=False)
+    serializer_class = RoleListSerializer
+    pagination_class = None  # Optional
+
+    def list(self, request, *args, **kwargs):
+        queryset = self.get_queryset()
+        serializer = self.get_serializer(queryset, many=True)
+
+        return Response({"custom-roles": serializer.data})
+    
+    
+# ------------------------------------------------ TEAM VIEW ------------------------------------------------
+class TeamCreateView(CreateAPIView):
+    queryset = Team.objects.all()
+    serializer_class = TeamCreateSerializer
+
+    def create(self, request, *args, **kwargs):
+        serializer = self.get_serializer(data=request.data)
+        serializer.is_valid(raise_exception=True)
+        team = serializer.save()
+        users = team.users.all()
+        return Response({
+            "team_id": team.id,
+            "team_name": team.name,
+            "users": [
+                {"id": user.id, "username": user.username}
+                for user in users
+            ]
+        }, status=status.HTTP_201_CREATED)
+
+# ------------------------------------------------ UPDATE TEAM VIEW ------------------------------------------------
+class TeamUpdateView(UpdateAPIView):
+    queryset = Team.objects.all()
+    serializer_class = TeamUpdateSerializer
+    lookup_field = "id"
+    permission_classes = [IsAuthenticated]
+    http_method_names = ['put', 'get']
+    def update(self, request, *args, **kwargs):
+        # 1. Ensure team exists
+        team = get_object_or_404(Team, id=kwargs.get("id"))
+
+        # 2. Run serializer validation
+        serializer = self.get_serializer(team, data=request.data, partial=True)
+        serializer.is_valid(raise_exception=True)
+
+        # 3. Apply changes
+        team = serializer.save()
+
+        # 4. Build consistent response
+        return Response(
+            {
+                "team_id": str(team.id),
+                "team_name": team.name,
+                "users": [
+                    {"id": str(user.id),"name":user.first_name ,"email": user.username}
+                    for user in team.users.all()
+                ],
+            },
+            status=status.HTTP_200_OK,
+        )
+    
+# -------------------------------------------------- TEAM DELETE VIEW ------------------------------------------------
+
+class TeamDeleteView(DestroyAPIView):
+    queryset = Team.objects.all()
+    lookup_field = "id"
+    permission_classes = [IsAuthenticated]
+
+    def delete(self, request, *args, **kwargs):
+        team = team = self.get_object()
+
+        # Step 1: Check for users who only belong to this team
+        blocking_users = []
+        for user in team.users.all():
+            if user.teams.count() == 1:  # only this team
+                blocking_users.append(user.username)
+
+        if blocking_users:
+            return Response(
+                {
+                    "error": "Cannot delete team",
+                    "details": f"Users {', '.join(blocking_users)} belong only to this team."
+                },
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+
+        # Step 2: Require confirmation
+        confirm = request.query_params.get("confirm", "false").lower()
+        if confirm != "true":
+            return Response(
+                {
+                    "message": "Are you sure you want to delete this team?",
+                },
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+
+        # Step 3: Perform delete safely in transaction
+        try:
+            with transaction.atomic():
+                team.delete()
+            return Response(
+                {"success": f"Team '{team.name}' deleted successfully."},
+                status=status.HTTP_200_OK,
+            )
+        except Exception as e:
+            return Response(
+                {"error": "Delete failed", "details": str(e)},
+                status=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            )
+
+
+class RemoveTeamMemberView(APIView):
+    """
+    Remove a member from a team with safety checks.
+    """
+
+    def delete(self, request, team_id, user_id, *args, **kwargs):
+        # Step 1: Check team exists
+        try:
+            team = Team.objects.get(id=team_id)
+        except Team.DoesNotExist:
+            return Response(
+                {"error": f"Team with id {team_id} not found."},
+                status=status.HTTP_404_NOT_FOUND,
+            )
+
+        # Step 2: Check user exists
+        try:
+            user = User.objects.get(id=user_id)
+        except User.DoesNotExist:
+            return Response(
+                {"error": f"User with id {user_id} not found."},
+                status=status.HTTP_404_NOT_FOUND,
+            )
+
+        # Step 3: Ensure user is in team
+        if user not in team.users.all():
+            return Response(
+                {"error": f"User {user.username} is not in team {team.name}."},
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+
+        # Step 5: Require confirmation
+        confirm = request.query_params.get("confirm", "false").lower()
+        if confirm != "true":
+            return Response(
+                {
+                    "message": f"Are you sure you want to remove user {user.first_name} with email {user.email} from {team.name}?",  
+                },
+                status=status.HTTP_400_BAD_REQUEST,
+            )
+
+        # Step 6: Perform removal
+        try:
+            with transaction.atomic():
+                team.users.remove(user)
+            return Response(
+                {"success": f"User {user.username} removed from team {team.name}."},
+                status=status.HTTP_200_OK,
+            )
+        except Exception as e:
+            return Response(
+                {"error": "Failed to remove user from team", "details": str(e)},
+                status=status.HTTP_500_INTERNAL_SERVER_ERROR,
+            )
+    
+# ---------------------------------------------------- TEAM LIST VIEW ------------------------------------------------
+class TeamListView(ListAPIView):
+    queryset = Team.objects.all()
+    serializer_class = TeamListSerializer
+

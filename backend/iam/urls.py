@@ -1,6 +1,13 @@
 import knox.views as knox_views
 from django.urls import include, path
 
+from iam.views import(
+    RoleCreateView, 
+    PermissionGroupsView,
+    RoleUpdateView,
+    RoleListView,
+    )
+
 from .views import (
     AuthTokenDetailView,
     PersonalAccessTokenViewSet,
@@ -11,6 +18,11 @@ from .views import (
     ResetPasswordConfirmView,
     SessionTokenView,
     SetPasswordView,
+    TeamCreateView,
+    TeamUpdateView,
+    TeamDeleteView,
+    TeamListView,
+    RemoveTeamMemberView
 )
 
 urlpatterns = [
@@ -38,4 +50,19 @@ urlpatterns = [
         AuthTokenDetailView.as_view(),
         name="auth-token-detail",
     ),
+    
+    # ================================ CUSTOM ROLES ========================
+    path("custom-role/", RoleCreateView.as_view(), name="custom-role"),
+    path("available-permissions/", PermissionGroupsView.as_view(), name="available-permissions"),
+    path("custom-role/list/", RoleListView.as_view(), name="custom-role-list"),
+    # path("custom-role/<uuid:id>/", RoleUpdateView.as_view(), name="custom-role-update"),
+    
+    # =============================== TEAM ================================
+    path('teams/create/', TeamCreateView.as_view(), name='create-team'),
+    path('teams/<uuid:id>/update/', TeamUpdateView.as_view(), name='team-update'),
+    path('teams/<uuid:id>/delete/', TeamDeleteView.as_view(), name='team-delete'),
+    path("teams/<uuid:team_id>/members/<uuid:user_id>/remove/", RemoveTeamMemberView.as_view(), name="remove_team_member"),
+    path('teams/', TeamListView.as_view(), name='team-list'),
+    # =============================== x ====================================
+
 ]

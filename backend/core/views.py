@@ -24,8 +24,7 @@ from django.db.models import (
     Value,
 )
 from django.db.models.functions import Greatest, Coalesce
-
-
+from django.db.models import Count
 from collections import defaultdict
 import pytz
 from uuid import UUID
@@ -87,6 +86,7 @@ from rest_framework.parsers import (
 from rest_framework.renderers import JSONRenderer
 from rest_framework.request import Request
 from rest_framework.response import Response
+from rest_framework import status
 from rest_framework.utils.serializer_helpers import ReturnDict
 from rest_framework.views import APIView
 from rest_framework.exceptions import PermissionDenied
@@ -101,8 +101,11 @@ from core.models import (
     RequirementMappingSet,
     RiskAssessment,
     AssetClass,
+    BridgeTable,
+    Perimeter, 
+    RiskAssessment
 )
-from core.serializers import ComplianceAssessmentReadSerializer
+from core.serializers import (ComplianceAssessmentReadSerializer)
 from core.utils import (
     compare_schema_versions,
     _generate_occurrences,
@@ -425,10 +428,19 @@ class PerimeterViewSet(BaseModelViewSet):
                 ).data,
                 "quality_check": compliance_assessment.quality_check(),
             }
-        for risk_assessment in RiskAssessment.objects.filter(perimeter__in=perimeters):
-            res[str(risk_assessment.perimeter.id)]["risk_assessments"]["objects"][
-                str(risk_assessment.id)
-            ] = {
+            # ---------------
+        user_teams = request.user.teams.all()
+        for risk_assessment in RiskAssessment.objects.filter(
+            Q(perimeter__in=perimeters) |
+            Q(id__in=BridgeTable.objects.filter(team__in=user_teams).values("risk_assessment_id"))
+        ).distinct():
+            perimeter_id = str(risk_assessment.perimeter.id)
+        
+            # Ensure the perimeter entry exists
+            if perimeter_id not in res:
+                res[perimeter_id] = {"risk_assessments": {"objects": {}}}
+        
+            res[perimeter_id]["risk_assessments"]["objects"][str(risk_assessment.id)] = {
                 "object": RiskAssessmentReadSerializer(risk_assessment).data,
                 "quality_check": risk_assessment.quality_check(),
             }
@@ -960,6 +972,19 @@ class RiskAssessmentViewSet(BaseModelViewSet):
         "authors",
         "reviewers",
     ]
+
+    def get_queryset(self):
+        user = self.request.user
+
+        # If admin / superuser, return all
+        if user.is_superuser or user.is_staff:
+            return RiskAssessment.objects.all()
+
+        # Otherwise, restrict by BridgeTable teams
+        user_teams = user.teams.all()
+        return RiskAssessment.objects.filter(
+            id__in=BridgeTable.objects.filter(team__in=user_teams).values("risk_assessment_id")
+        ).distinct()
 
     def perform_create(self, serializer):
         instance: RiskAssessment = serializer.save()
@@ -2584,8 +2609,6 @@ class UserGroupOrderingFilter(filters.OrderingFilter):
                 mapped_ordering.append(field)
 
         return mapped_ordering
-
-
 class UserGroupViewSet(BaseModelViewSet):
     """
     API endpoint that allows user groups to be viewed or edited
@@ -2604,6 +2627,82 @@ class UserGroupViewSet(BaseModelViewSet):
         filters.SearchFilter,
     ]
 
+    # def destroy(self, request, *args, **kwargs):
+    #     group = self.get_object()
+    #     User = get_user_model()
+
+    #     # All users in this group
+    #     users_in_group = User.objects.filter(user_groups=group).distinct()
+
+    #     # IDs of users in this group
+    #     user_ids_in_group = users_in_group.values_list("id", flat=True)
+
+    #     # Users who ONLY have this group
+    #     users_only_this_group = (
+    #         User.objects.filter(id__in=user_ids_in_group)
+    #         .annotate(group_count=Count('user_groups', distinct=True))
+    #         .filter(group_count=1)
+    #     )
+
+    #     if users_only_this_group.exists():
+    #         return Response(
+    #             {
+    #                 "detail": "cannotDeleteGroupBecauseItIsOnlyGroupForSomeUsers",
+    #                 "group_id": group.id,
+    #                 "group_name": group.name,
+    #                 "users_in_group": list(users_in_group.values("id", "email", "first_name", "last_name")),
+    #                 "users_only_this_group": list(users_only_this_group.values("id", "email", "first_name", "last_name")),
+    #             },
+    #             status=status.HTTP_409_CONFLICT
+    #         )
+
+    #     return super().destroy(request, *args, **kwargs)
+
+    def destroy(self, request, *args, **kwargs):
+        group = self.get_object()
+        User = get_user_model()
+    
+        # All users in this group
+        users_in_group = User.objects.filter(user_groups=group).distinct()
+    
+        # IDs of users in this group
+        user_ids_in_group = users_in_group.values_list("id", flat=True)
+    
+        # Users who ONLY have this group
+        users_only_this_group = (
+            User.objects.filter(id__in=user_ids_in_group)
+            .annotate(group_count=Count('user_groups', distinct=True))
+            .filter(group_count=1)
+        )
+    
+        # Case 1 — Conflict: some users only in this group
+        if users_only_this_group.exists():
+            return Response(
+                {
+                    "detail": "cannotDeleteGroupBecauseItIsOnlyGroupForSomeUsers",
+                    "group_id": group.id,
+                    "group_name": group.name,
+                    "users_in_group": list(users_in_group.values("id", "email", "first_name", "last_name")),
+                    "users_only_this_group": list(users_only_this_group.values("id", "email", "first_name", "last_name")),
+                },
+                status=status.HTTP_409_CONFLICT
+            )
+    
+        # Case 2 — No conflict: send confirmation request before deleting
+        if request.query_params.get("confirm") != "true":
+            return Response(
+                {
+                    "detail": "confirmDeleteGroup",
+                    "group_id": group.id,
+                    "group_name": group.name,
+                    "users_in_group": list(users_in_group.values("id", "email", "first_name", "last_name")),
+                    "message": f"Are you sure you want to delete the group '{group.name}'?"
+                },
+                status=status.HTTP_200_OK
+            )
+    
+        # Case 3 — Confirmation received: delete
+        return super().destroy(request, *args, **kwargs)
 
 class RoleViewSet(BaseModelViewSet):
     """
@@ -6036,3 +6135,11 @@ class TaskNodeViewSet(BaseModelViewSet):
         instance: TaskNode = serializer.save()
         instance.save()
         return super().perform_create(serializer)
+
+class BridgeTableViewSet(viewsets.ReadOnlyModelViewSet):
+    """
+    API endpoint to list and retrieve BridgeTable entries.
+    
+    """
+    queryset = BridgeTable.objects.select_related("risk_assessment", "team", "added_by").all()
+    serializer_class = BridgeTableSerializer

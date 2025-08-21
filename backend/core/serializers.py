@@ -270,11 +270,64 @@ class PerimeterImportExportSerializer(BaseModelSerializer):
         ]
 
 
+from rest_framework import serializers
+from core.models import RiskAssessment, BridgeTable
+from iam.models import Team
+
+
 class RiskAssessmentWriteSerializer(BaseModelSerializer):
+    # Accept teams as a list of UUIDs (instead of a ManyToManyField)
+    teams = serializers.ListField(
+        child=serializers.UUIDField(),
+        write_only=True,
+        required=True
+    )
+
     class Meta:
         model = RiskAssessment
         exclude = ["created_at", "updated_at"]
 
+    def validate_teams(self, team_ids):
+        """
+        Ensure all provided team IDs exist in the database.
+        """
+        existing_ids = set(Team.objects.filter(id__in=team_ids).values_list("id", flat=True))
+        invalid_ids = set(team_ids) - existing_ids
+
+        if invalid_ids:
+            raise serializers.ValidationError(
+                {"teams": [f"Invalid team IDs: {', '.join(map(str, invalid_ids))}"]}
+            )
+        return team_ids
+
+    def create(self, validated_data):
+        team_ids = validated_data.pop("teams", [])
+        risk_assessment = super().create(validated_data)
+
+        for team_id in team_ids:
+            BridgeTable.objects.create(
+                risk_assessment=risk_assessment,
+                team=Team.objects.get(id=team_id),
+                added_by=self.context["request"].user
+            )
+
+        return risk_assessment
+
+    def update(self, instance, validated_data):
+        team_ids = validated_data.pop("teams", [])
+        risk_assessment = super().update(instance, validated_data)
+
+        # Clear old entries
+        BridgeTable.objects.filter(risk_assessment=risk_assessment).delete()
+
+        for team_id in team_ids:
+            BridgeTable.objects.create(
+                risk_assessment=risk_assessment,
+                team=Team.objects.get(id=team_id),
+                added_by=self.context["request"].user
+            )
+
+        return risk_assessment
 
 class RiskAssessmentDuplicateSerializer(BaseModelSerializer):
     class Meta:
@@ -291,11 +344,20 @@ class RiskAssessmentReadSerializer(AssessmentReadSerializer):
     risk_scenarios_count = serializers.IntegerField(source="risk_scenarios.count")
     risk_matrix = FieldsRelatedField()
     ebios_rm_study = FieldsRelatedField(["id", "name"])
+    teams = serializers.SerializerMethodField()
 
+    def get_teams(self, obj):
+        return [
+            {
+                "id": entry.team.id,
+                "name": entry.team.name,
+                "assigned_at": entry.assigned_at,
+            }
+            for entry in obj.bridge_entries.all()
+        ]
     class Meta:
         model = RiskAssessment
         exclude = []
-
 
 class RiskAssessmentImportExportSerializer(BaseModelSerializer):
     risk_matrix = serializers.SlugRelatedField(slug_field="urn", read_only=True)
@@ -322,6 +384,9 @@ class RiskAssessmentImportExportSerializer(BaseModelSerializer):
             "created_at",
             "updated_at",
         ]
+        extra_kwargs = {
+            "teams": {"required": True}
+        }
 
 
 class AssetWriteSerializer(BaseModelSerializer):
@@ -804,8 +869,10 @@ class PolicyReadSerializer(AppliedControlReadSerializer):
 
 
 class UserReadSerializer(BaseModelSerializer):
-    user_groups = FieldsRelatedField(many=True)
-
+    user_groups = serializers.PrimaryKeyRelatedField(
+        many=True,
+        queryset=UserGroup.objects.all()
+    )
     class Meta:
         model = User
         fields = [
@@ -821,10 +888,14 @@ class UserReadSerializer(BaseModelSerializer):
             "observation",
         ]
 
-
+ #-----------------------------------------
 class UserWriteSerializer(BaseModelSerializer):
     is_local = serializers.BooleanField(required=False)
-
+    user_groups = serializers.PrimaryKeyRelatedField(
+        many=True,
+        queryset=UserGroup.objects.all(),
+        required=False
+    )
     class Meta:
         model = User
         fields = [
@@ -856,7 +927,11 @@ class UserWriteSerializer(BaseModelSerializer):
                 {"error": ["You do not have permission to create users"]}
             )
         try:
+            # user = User.objects.create_user(**validated_data)
+            user_groups = validated_data.pop("user_groups", [])
             user = User.objects.create_user(**validated_data)
+            if user_groups:
+                user.user_groups.set(user_groups)
         except Exception as e:
             logger.error(e)
             if (
@@ -893,16 +968,35 @@ class UserWriteSerializer(BaseModelSerializer):
                 # instance.user_groups.set(user_groups_data)
         return super().update(instance, validated_data)
 
+# -------------------------------------------------------------------------------------
+# class UserGroupReadSerializer(BaseModelSerializer):
+#     name = serializers.CharField(source="__str__")
+#     localization_dict = serializers.JSONField(source="get_localization_dict")
+#     folder = FieldsRelatedField()
+
+#     class Meta:
+#         model = UserGroup
+#         fields = "__all__"
 
 class UserGroupReadSerializer(BaseModelSerializer):
     name = serializers.CharField(source="__str__")
-    localization_dict = serializers.JSONField(source="get_localization_dict")
     folder = FieldsRelatedField()
+    localization_dict = serializers.SerializerMethodField()
 
     class Meta:
         model = UserGroup
         fields = "__all__"
 
+    def get_localization_dict(self, obj):
+        from iam.models import RoleAssignment
+        assignment = RoleAssignment.objects.filter(user_group=obj).first()
+
+        return {
+            "folder": obj.folder.name,
+            "role": assignment.role.name if assignment and assignment.role else None
+        }
+
+# -------------------------------------------------------------------------------------
 
 class UserGroupWriteSerializer(BaseModelSerializer):
     class Meta:
@@ -1799,3 +1893,35 @@ class TaskNodeWriteSerializer(BaseModelSerializer):
     class Meta:
         model = TaskNode
         exclude = ["task_template"]
+
+
+class BridgeTableSerializer(serializers.ModelSerializer):
+    from core.models import BridgeTable
+    risk_assessment = serializers.SerializerMethodField()
+    team = serializers.SerializerMethodField()
+    added_by = serializers.SerializerMethodField()
+
+    class Meta:
+        model = BridgeTable
+        fields = ["id", "risk_assessment", "team", "assigned_at", "added_by"]
+
+    def get_risk_assessment(self, obj):
+        return {
+            "id": obj.risk_assessment.id,
+            "name": obj.risk_assessment.name,
+        }
+
+    def get_team(self, obj):
+        return {
+            "id": obj.team.id,
+            "name": obj.team.name,
+        }
+
+    def get_added_by(self, obj):
+        if obj.added_by:
+            return {
+                "id": obj.added_by.id,
+                "username": obj.added_by.first_name,
+                "email": obj.added_by.email,
+            }
+        return None
