@@ -814,26 +814,37 @@ class TeamCreateView(CreateAPIView):
         }, status=status.HTTP_201_CREATED)
 
 # ------------------------------------------------ UPDATE TEAM VIEW ------------------------------------------------
+from django.shortcuts import get_object_or_404
 class TeamUpdateView(UpdateAPIView):
     queryset = Team.objects.all()
     serializer_class = TeamUpdateSerializer
     lookup_field = "id"
     permission_classes = [IsAuthenticated]
+
     def update(self, request, *args, **kwargs):
-        instance = self.get_object()
-        serializer = self.get_serializer(instance, data=request.data, partial=True)
+        # 1. Ensure team exists
+        team = get_object_or_404(Team, id=kwargs.get("id"))
+
+        # 2. Run serializer validation
+        serializer = self.get_serializer(team, data=request.data, partial=True)
         serializer.is_valid(raise_exception=True)
+
+        # 3. Apply changes
         team = serializer.save()
-        users = team.users.all()
-        return Response({
-            "team_id": str(team.id),
-            "team_name": team.name,
-            "users": [
-                {"id": str(user.id), "user email": user.username}
-                for user in users
-            ]
-        }, status=status.HTTP_200_OK)
-        
+
+        # 4. Build consistent response
+        return Response(
+            {
+                "team_id": str(team.id),
+                "team_name": team.name,
+                "users": [
+                    {"id": str(user.id),"name":user.first_name ,"email": user.username}
+                    for user in team.users.all()
+                ],
+            },
+            status=status.HTTP_200_OK,
+        )
+    
 # -------------------------------------------------- TEAM DELETE VIEW ------------------------------------------------
 class TeamDeleteView(DestroyAPIView):
     queryset = Team.objects.all()

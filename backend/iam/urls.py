@@ -57,7 +57,7 @@ urlpatterns = [
     # path("custom-role/<uuid:id>/", RoleUpdateView.as_view(), name="custom-role-update"),
     
     # =============================== TEAM ================================
-    path('create-teams/', TeamCreateView.as_view(), name='create-team'),
+    path('teams/create/', TeamCreateView.as_view(), name='create-team'),
     path('teams/<uuid:id>/update/', TeamUpdateView.as_view(), name='team-update'),
     path('teams/<uuid:id>/delete/', TeamDeleteView.as_view(), name='team-delete'),
     path('teams/', TeamListView.as_view(), name='team-list'),

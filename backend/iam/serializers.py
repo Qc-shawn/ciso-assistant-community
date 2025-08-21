@@ -289,26 +289,68 @@ class TeamCreateSerializer(serializers.Serializer):
     
 # ========================== TEAM UPDATE SERIALIZER =========================
 
+User = get_user_model()
 class TeamUpdateSerializer(serializers.Serializer):
-    name = serializers.CharField(max_length=255, required=False)
-    user_ids = serializers.ListField(child=serializers.UUIDField(), required=False)
+    name = serializers.CharField(max_length=255, required=False, allow_blank=False)
+    add_user_ids = serializers.ListField(
+        child=serializers.UUIDField(), required=False
+    )
 
-    def validate_user_ids(self, value):
-        if len(value) < 2:
-            raise serializers.ValidationError("A team must have at least two users.")
-        users = User.objects.filter(id__in=value)
-        if users.count() != len(value):
-            raise serializers.ValidationError("One or more user IDs are invalid.")
-        return value
+    from uuid import UUID
 
+    @transaction.atomic
     def update(self, instance, validated_data):
-        if 'name' in validated_data:
-            instance.name = validated_data['name']
-        if 'user_ids' in validated_data:
-            users = User.objects.filter(id__in=validated_data['user_ids'])
-            instance.users.set(users)
+        errors = {}
+
+        # 1. Update team name if provided
+        if "name" in validated_data:
+            name = validated_data["name"].strip()
+            if not name:
+                errors["name"] = "Team name cannot be blank."
+            else:
+                instance.name = name
+
+        # 2. Add new members
+        if "add_user_ids" in validated_data:
+            raw_ids = validated_data["add_user_ids"]
+
+            # Deduplicate input (ensure UUID objects)
+            try:
+                unique_ids = {self.UUID(str(uid)) for uid in raw_ids}
+            except ValueError as e:
+                raise serializers.ValidationError({"add_user_ids": f"Invalid UUID: {e}"})
+
+            # Bulk fetch users
+            users = list(User.objects.filter(id__in=unique_ids))
+            found_ids = {u.id for u in users}
+            missing_ids = unique_ids - found_ids
+
+            if missing_ids:
+                errors["add_user_ids"] = [
+                    f"User with this id : {uid} does not exist." for uid in missing_ids
+                ]
+
+            existing_ids = set(
+                instance.users.filter(id__in=found_ids).values_list("id", flat=True)
+            )
+            if existing_ids:
+                errors.setdefault("add_user_ids", []).extend(
+                    [f"User with this id: {uid} is already in the team." for uid in existing_ids]
+                )
+
+            # If no errors, add valid users
+            if not errors.get("add_user_ids"):
+                instance.users.add(*users)
+
+        # 3. Raise errors if any
+        if errors:
+            raise serializers.ValidationError(errors)
+
+        # 4. Save
         instance.save()
         return instance
+
+
 # ========================== TEAM LIST SERIALIZER =========================
 
 class TeamListSerializer(serializers.ModelSerializer):
