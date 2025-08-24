@@ -40,7 +40,7 @@ from pathlib import Path
 import humanize
 
 from wsgiref.util import FileWrapper
-
+from rest_framework.permissions import IsAuthenticated
 import pandas as pd
 import io
 
@@ -5963,7 +5963,16 @@ class TimelineEntryViewSet(BaseModelViewSet):
 class TaskTemplateViewSet(BaseModelViewSet):
     model = TaskTemplate
     filterset_fields = ["assigned_to", "is_recurrent", "folder", "applied_controls"]
+    queryset = TaskTemplate.objects.all()
+    serializer_class = TaskTemplateReadSerializer
+    permission_classes = [IsAuthenticated]
 
+    def get_queryset(self):
+        user = self.request.user
+        if user.is_superuser:
+            return TaskTemplate.objects.all().distinct()
+        return TaskTemplate.objects.filter(teams__in=user.teams.all()).distinct()
+    
     def task_calendar(self, task_templates, start=None, end=None):
         """Generate calendar of tasks for the given templates."""
         tasks_list = []

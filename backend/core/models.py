@@ -28,7 +28,7 @@ from django.utils.translation import gettext_lazy as _
 from structlog import get_logger
 from django.utils.timezone import now
 
-from iam.models import Folder, FolderMixin, PublishInRootFolderMixin
+from iam.models import Folder, FolderMixin, PublishInRootFolderMixin, Team
 from library.helpers import (
     get_referential_translation,
     update_translations,
@@ -5145,6 +5145,14 @@ class TaskTemplate(NameDescriptionMixin, FolderMixin):
         help_text="Finding assessments related to the task",
         related_name="task_templates",
     )
+    # ========================= TEAM =======================
+    teams = models.ManyToManyField(
+        Team,
+        related_name="task_templates",
+        verbose_name="Teams",
+        blank=True,
+    )
+    # ======================================================
 
     link = models.URLField(
         blank=True,

@@ -286,6 +286,7 @@ class RiskAssessmentWriteSerializer(BaseModelSerializer):
     class Meta:
         model = RiskAssessment
         exclude = ["created_at", "updated_at"]
+        
 
     def validate_teams(self, team_ids):
         """
