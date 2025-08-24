@@ -68,6 +68,14 @@ class Folder(NameDescriptionMixin):
     def get_root_folder() -> Self:
         """class function for general use"""
         return _get_root_folder()
+    
+    company_status = [
+        ("active", _("Active")),
+        ("inactive", _("Inactive")),
+        ("pending", _("Pending")),
+        ("suspended", _("Suspended")),
+        ("closed", _("Closed")),
+    ]
 
     @staticmethod
     def get_root_folder_id() -> uuid.UUID:
@@ -86,6 +94,34 @@ class Folder(NameDescriptionMixin):
 
     content_type = models.CharField(
         max_length=2, choices=ContentType.choices, default=ContentType.DOMAIN
+    )
+
+    phone = models.CharField(
+        max_length=20,
+        blank=True,
+        null=True,
+        verbose_name=_("phone"),
+        help_text=_("Phone number of the company"),
+    )
+
+    email = models.EmailField(
+        blank=True, null=True, verbose_name=_("email"), help_text=_("Email of the company")
+    )
+
+    location = models.CharField(
+        max_length=100,
+        blank=True,
+        null=True,
+        verbose_name=_("location"),
+        help_text=_("Location of the company"),
+    )
+
+    status = models.CharField(
+        max_length=20,
+        choices=company_status,
+        default="active",
+        verbose_name=_("status"),
+        help_text=_("Status of the company"),
     )
 
     parent_folder = models.ForeignKey(

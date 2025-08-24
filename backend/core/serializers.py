@@ -1052,6 +1052,10 @@ class FolderReadSerializer(BaseModelSerializer):
     parent_folder = FieldsRelatedField()
 
     content_type = serializers.CharField(source="get_content_type_display")
+    phone = serializers.CharField()
+    email = serializers.EmailField()
+    location = serializers.CharField()
+    status = serializers.CharField(source="get_status_display")
 
     class Meta:
         model = Folder
@@ -1068,10 +1072,13 @@ class FolderImportExportSerializer(BaseModelSerializer):
             "name",
             "description",
             "content_type",
+            "phone",
+            "email",
+            "location",
+            "status",
             "created_at",
             "updated_at",
         ]
-
 
 # Compliance Assessment
 
