@@ -5767,7 +5767,16 @@ class FindingsAssessmentViewSet(BaseModelViewSet):
         "evidences",
     ]
     search_fields = ["name", "description", "ref_id"]
+    queryset = FindingsAssessment.objects.all()
+    serializer_class = FindingsAssessmentReadSerializer
+    permission_classes = [IsAuthenticated]
 
+    def get_queryset(self):
+        user = self.request.user
+        if user.is_superuser:
+            return FindingsAssessment.objects.all().distinct()
+        return FindingsAssessment.objects.filter(teams__in=user.teams.all()).distinct()
+    
     @action(detail=False, name="Get status choices")
     def status(self, request):
         return Response(dict(FindingsAssessment.Status.choices))

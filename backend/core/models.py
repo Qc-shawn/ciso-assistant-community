@@ -4799,6 +4799,13 @@ class FindingsAssessment(Assessment):
         related_name="findings_assessments",
         verbose_name=_("Evidences"),
     )
+    
+    teams = models.ManyToManyField(
+        Team,
+        related_name="findings_assessments",   # or "findings" if you prefer
+        verbose_name="Teams",
+        blank=True
+    )
 
     ref_id = models.CharField(
         max_length=100, null=True, blank=True, verbose_name=_("reference id")
