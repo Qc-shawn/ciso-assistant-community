@@ -282,6 +282,20 @@ class RiskAssessmentWriteSerializer(BaseModelSerializer):
         write_only=True,
         required=True
     )
+    
+    def validate(self, attrs):
+        if hasattr(self, "instance") and self.instance and self.instance.is_locked:
+            # If we're unlocking (setting is_locked to False), allow the operation
+            if "is_locked" in attrs and attrs["is_locked"] is False:
+                return super().validate(attrs)
+
+            # Otherwise, only allow modifying the is_locked field
+            locked_fields = [field for field in attrs.keys() if field != "is_locked"]
+            if locked_fields:
+                raise serializers.ValidationError(
+                    f"⚠️ Cannot modify the risk assessment attributes when it is locked. Only the 'Locked' field can be modified."
+                )
+        return super().validate(attrs)
 
     class Meta:
         model = RiskAssessment
@@ -582,13 +596,24 @@ class RiskScenarioWriteSerializer(BaseModelSerializer):
         read_only=True, source="risk_assessment.risk_matrix"
     )
 
+    def validate(self, attrs):
+        if (
+            hasattr(self, "instance")
+            and self.instance
+            and self.instance.risk_assessment.is_locked
+        ):
+            raise serializers.ValidationError(
+                "⚠️ Cannot modify the risk scenario when the risk assessment is locked."
+            )
+        return super().validate(attrs)
+
     class Meta:
         model = RiskScenario
         fields = "__all__"
 
 
 class RiskScenarioReadSerializer(RiskScenarioWriteSerializer):
-    risk_assessment = FieldsRelatedField(["id", "name"])
+    risk_assessment = FieldsRelatedField(["id", "name", "is_locked"])
     risk_matrix = FieldsRelatedField(source="risk_assessment.risk_matrix")
     perimeter = FieldsRelatedField(
         source="risk_assessment.perimeter", fields=["id", "name", "folder"]
@@ -699,6 +724,7 @@ class AppliedControlReadSerializer(AppliedControlWriteSerializer):
     security_exceptions = FieldsRelatedField(many=True)
     state = serializers.SerializerMethodField()
     findings_count = serializers.IntegerField(source="findings.count")
+    is_assigned = serializers.BooleanField(read_only=True)
 
     def get_state(self, obj):
         if not obj.eta:
@@ -744,7 +770,7 @@ class ComplianceAssessmentActionPlanSerializer(ActionPlanSerializer):
         )
         return [
             {
-                "str": str(req.requirement.display_short or req.requirement.urn),
+                "str": str(req.requirement.safe_display_str),
                 "id": str(req.id),
             }
             for req in requirement_assessments
@@ -1318,6 +1344,20 @@ class ComplianceAssessmentWriteSerializer(BaseModelSerializer):
         write_only=True, required=False, default=False
     )
 
+    def validate(self, attrs):
+        if hasattr(self, "instance") and self.instance and self.instance.is_locked:
+            # If we're unlocking (setting is_locked to False), allow the operation
+            if "is_locked" in attrs and attrs["is_locked"] is False:
+                return super().validate(attrs)
+
+            # Otherwise, only allow modifying the is_locked field
+            locked_fields = [field for field in attrs.keys() if field != "is_locked"]
+            if locked_fields:
+                raise serializers.ValidationError(
+                    f"⚠️ Cannot modify the audit attributes when it is locked. Only the 'Locked' field can be modified."
+                )
+        return super().validate(attrs)
+
     def create(self, validated_data: Any):
         validated_data.pop("create_applied_controls_from_suggestions", None)
         return super().create(validated_data)
@@ -1377,12 +1417,13 @@ class RequirementAssessmentReadSerializer(BaseModelSerializer):
     name = serializers.CharField(source="__str__")
     description = serializers.CharField(source="get_requirement_description")
     evidences = FieldsRelatedField(many=True)
-    compliance_assessment = FieldsRelatedField()
+    compliance_assessment = FieldsRelatedField(["id", "name", "is_locked"])
     folder = FieldsRelatedField()
     perimeter = FieldsRelatedField(source="compliance_assessment.perimeter")
     assessable = serializers.BooleanField(source="requirement.assessable")
     requirement = FilteredNodeSerializer()
     security_exceptions = FieldsRelatedField(many=True)
+    is_locked = serializers.BooleanField()
 
     class Meta:
         model = RequirementAssessment
@@ -1390,6 +1431,16 @@ class RequirementAssessmentReadSerializer(BaseModelSerializer):
 
 
 class RequirementAssessmentWriteSerializer(BaseModelSerializer):
+    def validate(self, attrs):
+        compliance_assessment = self.get_compliance_assessment()
+
+        if compliance_assessment and compliance_assessment.is_locked:
+            raise serializers.ValidationError(
+                "⚠️ Cannot modify the requirement when the audit is locked."
+            )
+
+        return super().validate(attrs)
+
     def validate_score(self, value):
         compliance_assessment = self.get_compliance_assessment()
 
@@ -1532,6 +1583,20 @@ class SecurityExceptionReadSerializer(BaseModelSerializer):
 
 
 class FindingsAssessmentWriteSerializer(BaseModelSerializer):
+    def validate(self, attrs):
+        if hasattr(self, "instance") and self.instance and self.instance.is_locked:
+            # If we're unlocking (setting is_locked to False), allow the operation
+            if "is_locked" in attrs and attrs["is_locked"] is False:
+                return super().validate(attrs)
+
+            # Otherwise, only allow modifying the is_locked field
+            locked_fields = [field for field in attrs.keys() if field != "is_locked"]
+            if locked_fields:
+                raise serializers.ValidationError(
+                    f"⚠️ Cannot modify the findings assessment attributes when it is locked. Only the 'Locked' field can be modified."
+                )
+        return super().validate(attrs)
+
     class Meta:
         model = FindingsAssessment
         exclude = ["created_at", "updated_at"]
@@ -1549,6 +1614,17 @@ class FindingsAssessmentReadSerializer(AssessmentReadSerializer):
 
 
 class FindingWriteSerializer(BaseModelSerializer):
+    def validate(self, attrs):
+        if (
+            hasattr(self, "instance")
+            and self.instance
+            and self.instance.findings_assessment.is_locked
+        ):
+            raise serializers.ValidationError(
+                "⚠️ Cannot modify the finding when the findings assessment is locked."
+            )
+        return super().validate(attrs)
+
     class Meta:
         model = Finding
         exclude = ["created_at", "updated_at", "folder"]
@@ -1565,7 +1641,7 @@ class FindingWriteSerializer(BaseModelSerializer):
 class FindingReadSerializer(FindingWriteSerializer):
     path = PathField(source="get_folder_full_path", read_only=True)
     owner = FieldsRelatedField(many=True)
-    findings_assessment = FieldsRelatedField()
+    findings_assessment = FieldsRelatedField(["id", "name", "is_locked"])
     vulnerabilities = FieldsRelatedField(many=True)
     reference_controls = FieldsRelatedField(many=True)
     applied_controls = FieldsRelatedField(many=True)
