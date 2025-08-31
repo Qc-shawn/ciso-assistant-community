@@ -88,8 +88,10 @@
 			Array.from({ length: parsedRiskMatrix.impact.length }, () => [])
 		);
 		scenarios.forEach((scenario: RiskScenario) => {
-			const probability = scenario[`${risk}_proba`].value;
-			const impact = scenario[`${risk}_impact`].value;
+			const probabilityData = scenario[`${risk}_proba`];
+			const impactData = scenario[`${risk}_impact`];
+			const probability = probabilityData?.value ?? -1;
+			const impact = impactData?.value ?? -1;
 			probability >= 0 && impact >= 0 ? grid[probability][impact].push(scenario) : undefined;
 		});
 		return grid;
@@ -205,7 +207,9 @@
 						triggerClasses="btn preset-filled-primary-500 w-full"
 					>
 						{#snippet trigger()}
-							<i class="fa-solid fa-download mr-2"></i>{m.exportButton()}
+							<span data-testid="export-button">
+								<i class="fa-solid fa-download mr-2"></i>{m.exportButton()}
+							</span>
 						{/snippet}
 						{#snippet content()}
 							<div class="card whitespace-nowrap bg-white py-2 w-fit shadow-lg space-y-1">
