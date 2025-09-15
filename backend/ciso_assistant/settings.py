@@ -193,6 +193,7 @@ INSTALLED_APPS = [
     "tprm",
     "privacy",
     "resilience",
+    "crq",
     "core",
     "cal",
     "django_filters",

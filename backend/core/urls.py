@@ -82,11 +82,6 @@ router.register(
     basename="filtering-labels",
 )
 router.register(
-    r"qualifications",
-    QualificationViewSet,
-    basename="qualifications",
-)
-router.register(
     r"security-exceptions",
     SecurityExceptionViewSet,
     basename="security-exceptions",
@@ -124,6 +119,7 @@ urlpatterns = [
     path("ebios-rm/", include("ebios_rm.urls")),
     path("privacy/", include("privacy.urls")),
     path("resilience/", include("resilience.urls")),
+    path("crq/", include("crq.urls")),
     path("csrf/", get_csrf_token, name="get_csrf_token"),
     path("build/", get_build, name="get_build"),
     path("evidences/<uuid:pk>/upload/", UploadAttachmentView.as_view(), name="upload"),
@@ -157,6 +153,7 @@ urlpatterns = [
         RiskAssessmentActionPlanList.as_view(),
     ),
     path("quick-start/", QuickStartView.as_view(), name="quick-start"),
+    path("content-types/", ContentTypeListView.as_view(), name="content-types-list"),
 ]
 
 # Additional modules take precedence over the default modules

@@ -182,10 +182,11 @@ INSTALLED_APPS = [
     "tailwind",
     "iam",
     "global_settings",
-    "tprm",
     "ebios_rm",
+    "tprm",
     "privacy",
     "resilience",
+    "crq",
     "core",
     "cal",
     "django_filters",
@@ -202,6 +203,7 @@ INSTALLED_APPS = [
     "allauth.socialaccount.providers.openid_connect",
     "allauth.mfa",
     "huey.contrib.djhuey",
+    "storages",
 ]
 
 MIDDLEWARE = [
