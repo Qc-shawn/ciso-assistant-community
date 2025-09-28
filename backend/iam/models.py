@@ -44,6 +44,7 @@ import structlog
 logger = structlog.get_logger(__name__)
 
 from auditlog.registry import auditlog
+from allauth.mfa.models import Authenticator
 
 from django.db.models.signals import post_save
 from django.dispatch import receiver
@@ -542,6 +543,11 @@ class User(AbstractBaseUser, AbstractBaseModel, FolderMixin):
     observation = models.TextField(
         null=True, blank=True, verbose_name="Notes about a user"
     )
+    expiry_date = models.DateField(
+        blank=True,
+        null=True,
+        verbose_name=_("Expiry date"),
+    )
     objects = CaseInsensitiveUserManager()
 
     # USERNAME_FIELD is used as the unique identifier for the user
@@ -745,6 +751,13 @@ class User(AbstractBaseUser, AbstractBaseModel, FolderMixin):
             for user in cls.objects.all()
             if user.is_editor and not user.is_third_party
         ]
+
+    def has_mfa_enabled(self) -> bool:
+        """
+        Check if the user has Multi-Factor Authentication (MFA) enabled.
+        Returns True if the user has any active MFA authenticators (TOTP, WebAuthn, etc.).
+        """
+        return Authenticator.objects.filter(user=self).exists()
 
 
 class Role(NameDescriptionMixin, FolderMixin):

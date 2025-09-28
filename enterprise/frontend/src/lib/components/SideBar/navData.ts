@@ -110,9 +110,7 @@ export const navData = {
 					name: 'roles',
 					fa_icon: 'fa-solid fa-shield-halved',
 					href: '/roles',
-					permissions: [
-						'add_role',
-					]
+					permissions: ['add_role']
 				},
 				{
 					name: 'roleAssignments',
@@ -370,6 +368,12 @@ export const navData = {
 					fa_icon: 'fa-solid fa-diamond',
 					href: '/purposes',
 					permissions: ['view_purpose']
+				},
+				{
+					name: 'rightRequests',
+					fa_icon: 'fa-solid fa-user-shield',
+					href: '/right-requests',
+					permissions: ['view_rightrequest']
 				}
 			]
 		},

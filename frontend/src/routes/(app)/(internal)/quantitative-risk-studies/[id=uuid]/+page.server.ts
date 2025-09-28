@@ -37,16 +37,50 @@ export const load: PageServerLoad = async (event) => {
 		console.warn('Failed to fetch combined LEC data:', error);
 	}
 
+	// Fetch ALE comparison data
+	let aleComparisonData = null;
+	try {
+		const url = `${BASE_API_URL}/crq/quantitative-risk-studies/${event.params.id}/ale-comparison/`;
+		const response = await event.fetch(url);
+		if (response.ok) {
+			aleComparisonData = await response.json();
+		}
+	} catch (error) {
+		console.warn('Failed to fetch ALE comparison data:', error);
+	}
+
 	// Return the original data plus combined data
 	return {
 		...detailData,
 		combinedAle: combinedAleData,
-		combinedLec: combinedLecData
+		combinedLec: combinedLecData,
+		aleComparison: aleComparisonData
 	};
 };
 
 export const actions: Actions = {
 	delete: async (event) => {
 		return nestedDeleteFormAction({ event });
+	},
+	retriggerAllSimulations: async (event) => {
+		const endpoint = `${BASE_API_URL}/crq/quantitative-risk-studies/${event.params.id}/retrigger-all-simulations/`;
+		const res = await event.fetch(endpoint, {
+			method: 'POST'
+		});
+
+		if (!res.ok) {
+			const response = await res.json();
+			console.error('Error response:', response);
+			return {
+				error: true,
+				message: response
+			};
+		}
+
+		const result = await res.json();
+		return {
+			success: true,
+			message: { simulationsComplete: true, results: result }
+		};
 	}
 };

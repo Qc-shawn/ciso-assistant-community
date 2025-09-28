@@ -226,7 +226,7 @@ MIDDLEWARE = [
     "core.custom_middleware.AuditlogMiddleware",
     "allauth.account.middleware.AccountMiddleware",
 ]
-
+# MIDDLEWARE += ["querycount.middleware.QueryCountMiddleware"]
 ROOT_URLCONF = "ciso_assistant.urls"
 # we leave these for the API UI tools - even if Django templates and Admin are not used anymore
 LOGIN_REDIRECT_URL = "/api"
@@ -385,6 +385,7 @@ LANGUAGES = [
     ("uk", "Ukrainian"),
     ("el", "Greek"),
     ("tr", "Turkish"),
+    ("hr", "Croatian"),
 ]
 
 PROJECT_PATH = os.path.dirname(os.path.abspath(__file__))
