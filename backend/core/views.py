@@ -7465,3 +7465,395 @@ class TerminologyViewSet(BaseModelViewSet):
     @action(detail=False, name="Get class name choices")
     def field_path(self, request):
         return Response(dict(Terminology.FieldPath.choices))
+
+# --------------- Document Centre ---------------
+class DocumentCentreFilter(GenericFilterSet):
+    """FilterSet for DocumentCentre with support for all field types"""
+    
+    folder = df.ModelMultipleChoiceFilter(
+        queryset=Folder.objects.all(),
+    )
+    
+    perimeter = df.ModelMultipleChoiceFilter(
+        queryset=Perimeter.objects.all(),
+    )
+    
+    document_type = df.MultipleChoiceFilter(
+        choices=DocumentCentre.DocumentType.choices,
+    )
+    
+    document_status = df.MultipleChoiceFilter(
+        choices=DocumentCentre.DocumentStatus.choices,
+    )
+    
+    submitted_by = df.ModelMultipleChoiceFilter(
+        queryset=User.objects.all(),
+    )
+    
+    document_owner = df.ModelMultipleChoiceFilter(
+        queryset=User.objects.all(),
+    )
+    
+    approver = df.ModelMultipleChoiceFilter(
+        queryset=User.objects.all(),
+    )
+    
+    frameworks = df.ModelMultipleChoiceFilter(
+        queryset=Framework.objects.all(),
+    )
+    
+    teams = df.ModelMultipleChoiceFilter(
+        queryset=get_user_model().teams.through._meta.get_field('team').remote_field.model.objects.all(),
+    )
+    
+    # Date range filters
+    creation_date = df.DateFromToRangeFilter()
+    last_review_date = df.DateFromToRangeFilter()
+    next_review_date = df.DateFromToRangeFilter()
+    approval_date = df.DateFromToRangeFilter()
+    
+    class Meta:
+        model = DocumentCentre
+        fields = [
+            'folder',
+            'perimeter',
+            'document_type',
+            'document_status',
+            'submitted_by',
+            'document_owner',
+            'approver',
+            'frameworks',
+            'teams',
+            'creation_date',
+            'last_review_date',
+            'next_review_date',
+            'approval_date',
+        ]
+
+
+class DocumentCentreViewSet(BaseModelViewSet):
+    """
+    API endpoint for Document Centre management with full integration
+    into the existing security and folder architecture.
+    """
+    
+    model = DocumentCentre
+    filterset_class = DocumentCentreFilter
+    search_fields = [
+        'document_name',
+        'observation',
+        'version',
+    ]
+    filterset_fields = [
+        'folder',
+        'perimeter',
+        'document_type',
+        'document_status',
+        'submitted_by',
+        'document_owner',
+        'approver',
+        'frameworks',
+        'teams',
+        'creation_date',
+        'last_review_date',
+        'next_review_date',
+        'approval_date',
+    ]
+    
+    @action(detail=False, name="Get document type choices")
+    def document_types(self, request):
+        """Get available document type choices"""
+        return Response(dict(DocumentCentre.DocumentType.choices))
+    
+    @action(detail=False, name="Get document status choices")
+    def document_statuses(self, request):
+        """Get available document status choices"""
+        return Response(dict(DocumentCentre.DocumentStatus.choices))
+    
+    @action(detail=True, methods=['post'])
+    def promote_to_approved(self, request, pk):
+        """
+        Promote draft evidence to approved evidence
+        """
+        document = self.get_object()
+        
+        # Check if user has permission to approve
+        if not RoleAssignment.is_access_allowed(
+            user=request.user,
+            perm=Permission.objects.get(codename='change_documentcentre'),
+            folder=document.folder,
+            object=document
+        ):
+            return Response(
+                {'detail': 'You do not have permission to approve this document.'},
+                status=status.HTTP_403_FORBIDDEN
+            )
+        
+        evidence_id = request.data.get('evidence_id')
+        evidence = None
+        
+        if evidence_id:
+            try:
+                evidence = Evidence.objects.get(id=evidence_id)
+            except Evidence.DoesNotExist:
+                return Response(
+                    {'detail': 'Specified evidence not found.'},
+                    status=status.HTTP_404_NOT_FOUND
+                )
+        
+        # Promote the document
+        try:
+            document.promote_to_approved(evidence)
+            return Response(
+                {'detail': 'Document successfully approved.', 'document': str(document)},
+                status=status.HTTP_200_OK
+            )
+        except Exception as e:
+            return Response(
+                {'detail': f'Error promoting document: {str(e)}'},
+                status=status.HTTP_400_BAD_REQUEST
+            )
+    
+    @action(detail=True, methods=['post'])
+    def create_version(self, request, pk):
+        """
+        Create a new version of the document
+        """
+        document = self.get_object()
+        
+        # Check permission
+        if not RoleAssignment.is_access_allowed(
+            user=request.user,
+            perm=Permission.objects.get(codename='add_documentcentre'),
+            folder=document.folder,
+        ):
+            return Response(
+                {'detail': 'You do not have permission to create new versions.'},
+                status=status.HTTP_403_FORBIDDEN
+            )
+        
+        try:
+            new_version = document.create_new_version()
+            
+            # Copy additional data if provided
+            if 'draft_evidence_id' in request.data:
+                try:
+                    draft_evidence = Evidence.objects.get(id=request.data['draft_evidence_id'])
+                    new_version.draft_evidence = draft_evidence
+                    new_version.save()
+                except Evidence.DoesNotExist:
+                    pass
+            
+            serializer_class = self.get_serializer_class(action='retrieve')
+            serializer = serializer_class(new_version, context=self.get_serializer_context())
+            
+            return Response(
+                {
+                    'detail': 'New version created successfully.',
+                    'new_document': serializer.data
+                },
+                status=status.HTTP_201_CREATED
+            )
+        except Exception as e:
+            return Response(
+                {'detail': f'Error creating new version: {str(e)}'},
+                status=status.HTTP_400_BAD_REQUEST
+            )
+    
+    @action(detail=False, methods=['get'])
+    def overdue_documents(self, request):
+        """
+        Get documents that are overdue for review
+        """
+        queryset = self.filter_queryset(self.get_queryset())
+        today = date.today()
+        
+        # Filter for overdue documents
+        overdue_docs = queryset.filter(
+            next_review_date__lt=today,
+            document_status__in=[
+                DocumentCentre.DocumentStatus.APPROVED,
+                DocumentCentre.DocumentStatus.ARCHIVED
+            ]
+        ).order_by('next_review_date')
+        
+        page = self.paginate_queryset(overdue_docs)
+        if page is not None:
+            serializer = self.get_serializer(page, many=True)
+            return self.get_paginated_response(serializer.data)
+        
+        serializer = self.get_serializer(overdue_docs, many=True)
+        return Response(serializer.data)
+    
+    @action(detail=False, methods=['get'])
+    def upcoming_reviews(self, request):
+        """
+        Get documents with upcoming reviews (next 30 days)
+        """
+        queryset = self.filter_queryset(self.get_queryset())
+        today = date.today()
+        next_month = today + timedelta(days=30)
+        
+        # Filter for upcoming reviews
+        upcoming_docs = queryset.filter(
+            next_review_date__gte=today,
+            next_review_date__lte=next_month,
+            document_status__in=[
+                DocumentCentre.DocumentStatus.APPROVED,
+                DocumentCentre.DocumentStatus.ARCHIVED
+            ]
+        ).order_by('next_review_date')
+        
+        page = self.paginate_queryset(upcoming_docs)
+        if page is not None:
+            serializer = self.get_serializer(page, many=True)
+            return self.get_paginated_response(serializer.data)
+        
+        serializer = self.get_serializer(upcoming_docs, many=True)
+        return Response(serializer.data)
+    
+    @action(detail=True, methods=['post'])
+    def complete_review(self, request, pk):
+        """
+        Mark a document as reviewed and update review dates
+        """
+        document = self.get_object()
+        
+        # Check permission
+        if not RoleAssignment.is_access_allowed(
+            user=request.user,
+            perm=Permission.objects.get(codename='change_documentcentre'),
+            folder=document.folder,
+            object=document
+        ):
+            return Response(
+                {'detail': 'You do not have permission to review this document.'},
+                status=status.HTTP_403_FORBIDDEN
+            )
+        
+        # Update review date
+        document.last_review_date = date.today()
+        
+        # Calculate next review date if frequency is set
+        if document.review_frequency > 0:
+            document.next_review_date = document.last_review_date + timedelta(
+                days=document.review_frequency
+            )
+        
+        document.save()
+        
+        # Create timeline entry or log if needed
+        TimelineEntry.objects.create(
+            incident=None,  # Or link to specific incident if applicable
+            entry=f"Document reviewed: {document.document_name}",
+            entry_type=TimelineEntry.EntryType.OBSERVATION,
+            author=request.user,
+            observation=request.data.get('review_notes', '')
+        )
+        
+        return Response(
+            {'detail': 'Document review completed successfully.', 'document': str(document)},
+            status=status.HTTP_200_OK
+        )
+    
+    @action(detail=False, methods=['get'])
+    def statistics(self, request):
+        """
+        Get document statistics
+        """
+        queryset = self.filter_queryset(self.get_queryset())
+        
+        stats = {
+            'total': queryset.count(),
+            'by_type': {},
+            'by_status': {},
+            'overdue': queryset.filter(
+                next_review_date__lt=date.today(),
+                document_status__in=[
+                    DocumentCentre.DocumentStatus.APPROVED,
+                    DocumentCentre.DocumentStatus.ARCHIVED
+                ]
+            ).count(),
+            'upcoming': queryset.filter(
+                next_review_date__gte=date.today(),
+                next_review_date__lte=date.today() + timedelta(days=30),
+                document_status__in=[
+                    DocumentCentre.DocumentStatus.APPROVED,
+                    DocumentCentre.DocumentStatus.ARCHIVED
+                ]
+            ).count(),
+        }
+        
+        # Count by document type
+        for doc_type, label in DocumentCentre.DocumentType.choices:
+            stats['by_type'][doc_type] = {
+                'label': label,
+                'count': queryset.filter(document_type=doc_type).count()
+            }
+        
+        # Count by status
+        for status_code, label in DocumentCentre.DocumentStatus.choices:
+            stats['by_status'][status_code] = {
+                'label': label,
+                'count': queryset.filter(document_status=status_code).count()
+            }
+        
+        return Response(stats)
+    
+    def create(self, request, *args, **kwargs):
+        """
+        Override create to handle evidence linking
+        """
+        self._process_request_data(request)
+        
+        # Handle evidence IDs
+        if 'draft_evidence_id' in request.data:
+            try:
+                draft_evidence = Evidence.objects.get(id=request.data['draft_evidence_id'])
+                request.data['draft_evidence'] = str(draft_evidence.id)
+            except Evidence.DoesNotExist:
+                return Response(
+                    {'detail': 'Draft evidence not found.'},
+                    status=status.HTTP_400_BAD_REQUEST
+                )
+        
+        if 'approved_evidence_id' in request.data:
+            try:
+                approved_evidence = Evidence.objects.get(id=request.data['approved_evidence_id'])
+                request.data['approved_evidence'] = str(approved_evidence.id)
+            except Evidence.DoesNotExist:
+                return Response(
+                    {'detail': 'Approved evidence not found.'},
+                    status=status.HTTP_400_BAD_REQUEST
+                )
+        
+        return super().create(request, *args, **kwargs)
+    
+    def update(self, request, *args, **kwargs):
+        """
+        Override update to handle evidence linking
+        """
+        self._process_request_data(request)
+        
+        # Handle evidence IDs
+        if 'draft_evidence_id' in request.data:
+            try:
+                draft_evidence = Evidence.objects.get(id=request.data['draft_evidence_id'])
+                request.data['draft_evidence'] = str(draft_evidence.id)
+            except Evidence.DoesNotExist:
+                return Response(
+                    {'detail': 'Draft evidence not found.'},
+                    status=status.HTTP_400_BAD_REQUEST
+                )
+        
+        if 'approved_evidence_id' in request.data:
+            try:
+                approved_evidence = Evidence.objects.get(id=request.data['approved_evidence_id'])
+                request.data['approved_evidence'] = str(approved_evidence.id)
+            except Evidence.DoesNotExist:
+                return Response(
+                    {'detail': 'Approved evidence not found.'},
+                    status=status.HTTP_400_BAD_REQUEST
+                )
+        
+        return super().update(request, *args, **kwargs)

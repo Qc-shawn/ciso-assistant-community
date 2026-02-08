@@ -99,6 +99,7 @@ router.register(r"task-templates", TaskTemplateViewSet, basename="task-templates
 router.register(r"task-nodes", TaskNodeViewSet, basename="task-nodes")
 router.register(r"bridgetable", BridgeTableViewSet, basename="bridgetable")
 router.register(r"terminologies", TerminologyViewSet, basename="terminologies")
+router.register(r'document-centre', DocumentCentreViewSet, basename='documentcentre')
 
 ROUTES = settings.ROUTES
 MODULES = settings.MODULES.values()

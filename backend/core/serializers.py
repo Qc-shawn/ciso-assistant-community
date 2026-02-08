@@ -2493,3 +2493,402 @@ class ComplianceAssessmentEvidenceSerializer(BaseModelSerializer):
             "size",
             "requirement_assessments",
         ]
+
+#-----------------------------Document Centre Serializers-----------------------------#
+class DocumentCentreWriteSerializer(BaseModelSerializer):
+    """Serializer for creating/updating DocumentCentre"""
+    
+    # Accept related objects as UUIDs
+    draft_evidence = serializers.PrimaryKeyRelatedField(
+        queryset=Evidence.objects.all(),
+        required=False,
+        allow_null=True,
+        write_only=True
+    )
+    
+    approved_evidence = serializers.PrimaryKeyRelatedField(
+        queryset=Evidence.objects.all(),
+        required=False,
+        allow_null=True,
+        write_only=True
+    )
+    
+    perimeter = serializers.PrimaryKeyRelatedField(
+        queryset=Perimeter.objects.all(),
+        required=False,
+        allow_null=True
+    )
+    
+    submitted_by = serializers.PrimaryKeyRelatedField(
+        queryset=User.objects.all(),
+        required=False,
+        allow_null=True
+    )
+    
+    updated_by = serializers.PrimaryKeyRelatedField(
+        queryset=User.objects.all(),
+        required=False,
+        allow_null=True
+    )
+    
+    document_owner = serializers.PrimaryKeyRelatedField(
+        queryset=User.objects.all(),
+        required=False,
+        allow_null=True
+    )
+    
+    approver = serializers.PrimaryKeyRelatedField(
+        queryset=User.objects.all(),
+        required=False,
+        allow_null=True
+    )
+    
+    frameworks = serializers.PrimaryKeyRelatedField(
+        many=True,
+        queryset=Framework.objects.all(),
+        required=False
+    )
+    
+    teams = serializers.PrimaryKeyRelatedField(
+        many=True,
+        queryset=Team.objects.all(),
+        required=False
+    )
+    
+    additional_stakeholders = serializers.PrimaryKeyRelatedField(
+        many=True,
+        queryset=User.objects.all(),
+        required=False
+    )
+    
+    parent = serializers.PrimaryKeyRelatedField(
+        queryset=DocumentCentre.objects.all(),
+        required=False,
+        allow_null=True
+    )
+    
+    def validate(self, attrs):
+        """Validate document constraints"""
+        # Ensure at least draft or approved evidence is provided
+        if not attrs.get('draft_evidence') and not attrs.get('approved_evidence'):
+            raise serializers.ValidationError({
+                'draft_evidence': 'At least draft or approved evidence must be provided'
+            })
+        
+        # If approved evidence is provided, status should be APPROVED
+        if attrs.get('approved_evidence') and attrs.get('document_status', DocumentCentre.DocumentStatus.DRAFT) == DocumentCentre.DocumentStatus.DRAFT:
+            attrs['document_status'] = DocumentCentre.DocumentStatus.APPROVED
+        
+        # Validate parent-child relationship
+        parent = attrs.get('parent')
+        if parent:
+            if parent == self.instance:
+                raise serializers.ValidationError({
+                    'parent': 'Document cannot be its own parent'
+                })
+        
+        return attrs
+    
+    # def create(self, validated_data):
+    #     """Override create to handle user assignment"""
+    #     # Set submitted_by to current user if not provided
+    #     if not validated_data.get('submitted_by'):
+    #         validated_data['submitted_by'] = self.context['request'].user
+        
+    #     # Set updated_by to current user
+    #     validated_data['updated_by'] = self.context['request'].user
+        
+    #     # Handle folder inheritance from perimeter
+    #     if not validated_data.get('folder') and validated_data.get('perimeter'):
+    #         validated_data['folder'] = validated_data['perimeter'].folder
+        
+    #     document = super().create(validated_data)
+        
+    #     # Send notifications to stakeholders if assigned
+    #     self._send_notifications(document)
+        
+    #     return document
+    def create(self, validated_data):
+        # Skip permission check for now
+        logger.debug("validated data", **validated_data)
+        folder = Folder.get_folder(validated_data)
+        folder = folder if folder else Folder.get_root_folder()
+        
+        # Manually set folder if not provided
+        if not validated_data.get('folder') and validated_data.get('perimeter'):
+            validated_data['folder'] = validated_data['perimeter'].folder
+        
+        try:
+            object_created = super(BaseModelSerializer, self).create(validated_data)
+            return object_created
+        except ValidationError as e:
+            logger.error(e)
+            raise serializers.ValidationError(e.args[0])
+    
+    def update(self, instance, validated_data):
+        """Override update to track changes"""
+        # Set updated_by to current user
+        validated_data['updated_by'] = self.context['request'].user
+        
+        # Track old owners for notification
+        old_owner = instance.document_owner
+        old_additional_stakeholders = set(instance.additional_stakeholders.values_list('id', flat=True))
+        
+        updated_document = super().update(instance, validated_data)
+        
+        # Check if owner changed
+        new_owner = updated_document.document_owner
+        new_additional_stakeholders = set(updated_document.additional_stakeholders.values_list('id', flat=True))
+        
+        # Send notifications for new assignments
+        if old_owner != new_owner:
+            self._send_owner_notification(updated_document, new_owner)
+        
+        # Send notifications to newly added stakeholders
+        newly_added = new_additional_stakeholders - old_additional_stakeholders
+        if newly_added:
+            self._send_stakeholder_notifications(updated_document, newly_added)
+        
+        return updated_document
+    
+    def _send_notifications(self, document):
+        """Send notifications to assigned users"""
+        try:
+            from .tasks import send_document_assignment_notification
+            
+            # Collect all users to notify
+            users_to_notify = set()
+            
+            if document.document_owner:
+                users_to_notify.add(document.document_owner.id)
+            
+            if document.submitted_by:
+                users_to_notify.add(document.submitted_by.id)
+            
+            for stakeholder in document.additional_stakeholders.all():
+                users_to_notify.add(stakeholder.id)
+            
+            # Convert to emails
+            users = User.objects.filter(id__in=users_to_notify)
+            emails = [user.email for user in users if user.email]
+            
+            if emails:
+                send_document_assignment_notification(document.id, emails)
+                
+        except Exception as e:
+            logger.error(f"Failed to send document notifications: {str(e)}")
+    
+    def _send_owner_notification(self, document, owner):
+        """Send notification to new document owner"""
+        try:
+            from .tasks import send_document_owner_notification
+            
+            if owner and owner.email:
+                send_document_owner_notification(document.id, owner.email)
+                
+        except Exception as e:
+            logger.error(f"Failed to send owner notification: {str(e)}")
+    
+    def _send_stakeholder_notifications(self, document, stakeholder_ids):
+        """Send notifications to new stakeholders"""
+        try:
+            from .tasks import send_document_stakeholder_notification
+            
+            stakeholders = User.objects.filter(id__in=stakeholder_ids)
+            emails = [user.email for user in stakeholders if user.email]
+            
+            if emails:
+                send_document_stakeholder_notification(document.id, emails)
+                
+        except Exception as e:
+            logger.error(f"Failed to send stakeholder notifications: {str(e)}")
+    
+    class Meta:
+        model = DocumentCentre
+        exclude = ["created_at", "updated_at", "is_published"]
+        read_only_fields = ['submitted_by', 'updated_by']
+
+
+class DocumentCentreReadSerializer(DocumentCentreWriteSerializer):
+    """Serializer for reading DocumentCentre with expanded relationships"""
+    
+    path = PathField(read_only=True)
+    folder = FieldsRelatedField()
+    perimeter = FieldsRelatedField()
+    
+    # Expand evidence objects
+    draft_evidence = FieldsRelatedField(fields=["id", "name", "status", "last_revision"])
+    approved_evidence = FieldsRelatedField(fields=["id", "name", "status", "last_revision"])
+    
+    # Expand user objects
+    submitted_by = FieldsRelatedField(fields=["id", "first_name", "last_name", "email"])
+    updated_by = FieldsRelatedField(fields=["id", "first_name", "last_name", "email"])
+    document_owner = FieldsRelatedField(fields=["id", "first_name", "last_name", "email"])
+    approver = FieldsRelatedField(fields=["id", "first_name", "last_name", "email"])
+    
+    # Expand related objects
+    frameworks = FieldsRelatedField(many=True)
+    teams = FieldsRelatedField(many=True)
+    additional_stakeholders = FieldsRelatedField(
+        many=True, 
+        fields=["id", "first_name", "last_name", "email"]
+    )
+    parent = FieldsRelatedField(fields=["id", "document_name", "version"])
+    
+    # Display fields
+    document_type = serializers.CharField(source="get_document_type_display")
+    document_status = serializers.CharField(source="get_document_status_display")
+    
+    # Computed properties
+    current_evidence = serializers.SerializerMethodField()
+    is_overdue_for_review = serializers.BooleanField(read_only=True)
+    days_until_review = serializers.IntegerField(read_only=True)
+    
+    # Version information
+    versions = serializers.SerializerMethodField()
+    
+    def get_current_evidence(self, obj):
+        """Get current evidence based on document status"""
+        current = obj.current_evidence
+        if current:
+            return {
+                "id": current.id,
+                "name": current.name,
+                "status": current.get_status_display(),
+                "size": current.get_size(),
+                "url": current.last_revision.attachment.url if current.last_revision and current.last_revision.attachment else None
+            }
+        return None
+    
+    def get_versions(self, obj):
+        """Get all versions of this document"""
+        versions = DocumentCentre.objects.filter(
+            parent=obj.parent or obj
+        ).order_by('-creation_date')
+        
+        return [
+            {
+                "id": version.id,
+                "document_name": version.document_name,
+                "version": version.version,
+                "document_status": version.get_document_status_display(),
+                "creation_date": version.creation_date,
+                "updated_by": {
+                    "id": version.updated_by.id,
+                    "name": f"{version.updated_by.first_name} {version.updated_by.last_name}"
+                } if version.updated_by else None
+            }
+            for version in versions
+        ]
+    
+    class Meta:
+        model = DocumentCentre
+        fields = "__all__"
+        read_only_fields = ['created_at', 'updated_at', 'is_published']
+
+
+class DocumentCentreImportExportSerializer(BaseModelSerializer):
+    """Serializer for importing/exporting DocumentCentre"""
+    
+    folder = HashSlugRelatedField(slug_field="pk", read_only=True)
+    perimeter = HashSlugRelatedField(slug_field="pk", read_only=True)
+    draft_evidence = HashSlugRelatedField(slug_field="pk", read_only=True)
+    approved_evidence = HashSlugRelatedField(slug_field="pk", read_only=True)
+    submitted_by = HashSlugRelatedField(slug_field="pk", read_only=True)
+    updated_by = HashSlugRelatedField(slug_field="pk", read_only=True)
+    document_owner = HashSlugRelatedField(slug_field="pk", read_only=True)
+    approver = HashSlugRelatedField(slug_field="pk", read_only=True)
+    frameworks = HashSlugRelatedField(slug_field="pk", read_only=True, many=True)
+    teams = HashSlugRelatedField(slug_field="pk", read_only=True, many=True)
+    additional_stakeholders = HashSlugRelatedField(slug_field="pk", read_only=True, many=True)
+    parent = HashSlugRelatedField(slug_field="pk", read_only=True)
+    
+    class Meta:
+        model = DocumentCentre
+        fields = [
+            "document_name",
+            "document_type",
+            "document_status",
+            "version",
+            "folder",
+            "perimeter",
+            "draft_evidence",
+            "approved_evidence",
+            "submitted_by",
+            "updated_by",
+            "document_owner",
+            "approver",
+            "frameworks",
+            "teams",
+            "additional_stakeholders",
+            "parent",
+            "creation_date",
+            "last_review_date",
+            "review_frequency",
+            "next_review_date",
+            "approval_date",
+            "observation",
+            "created_at",
+            "updated_at",
+        ]
+
+
+class DocumentCentreDuplicateSerializer(BaseModelSerializer):
+    """Serializer for duplicating DocumentCentre"""
+    
+    class Meta:
+        model = DocumentCentre
+        fields = [
+            "document_name",
+            "document_type",
+            "folder",
+            "perimeter",
+            "frameworks",
+            "teams",
+            "document_owner",
+        ]
+
+
+class DocumentCentrePromoteSerializer(serializers.Serializer):
+    """Serializer for promoting draft to approved"""
+    
+    evidence_id = serializers.UUIDField(required=False)
+    review_notes = serializers.CharField(required=False, allow_blank=True)
+    approval_date = serializers.DateField(required=False)
+    
+    def validate(self, attrs):
+        """Validate promotion request"""
+        document = self.context.get('document')
+        
+        if not document:
+            raise serializers.ValidationError("Document context is required")
+        
+        if document.document_status == DocumentCentre.DocumentStatus.APPROVED:
+            raise serializers.ValidationError("Document is already approved")
+        
+        if not document.draft_evidence:
+            raise serializers.ValidationError("No draft evidence to promote")
+        
+        return attrs
+
+
+class DocumentCentreReviewSerializer(serializers.Serializer):
+    """Serializer for completing document review"""
+    
+    review_notes = serializers.CharField(required=False, allow_blank=True)
+    review_date = serializers.DateField(required=False)
+    update_frequency = serializers.BooleanField(default=False)
+    new_frequency = serializers.IntegerField(
+        required=False, 
+        min_value=0, 
+        max_value=365*5  # Max 5 years
+    )
+    
+    def validate(self, attrs):
+        """Validate review request"""
+        if attrs.get('update_frequency') and not attrs.get('new_frequency'):
+            raise serializers.ValidationError({
+                'new_frequency': 'Required when updating review frequency'
+            })
+        
+        return attrs

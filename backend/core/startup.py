@@ -874,6 +874,11 @@ ADMINISTRATOR_PERMISSIONS_LIST = [
     "change_role",
     "delete_role",
     "view_permission",
+    #documentcentre
+    "add_documentcentre",
+    "view_documentcentre",  
+    "change_documentcentre",
+    "delete_documentcentre",
 ]
 
 THIRD_PARTY_RESPONDENT_PERMISSIONS_LIST = [

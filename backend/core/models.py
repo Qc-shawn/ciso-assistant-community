@@ -3465,6 +3465,289 @@ class Policy(AppliedControl):
         self.category = "policy"
         super(Policy, self).save(*args, **kwargs)
 
+from datetime import timedelta
+
+class DocumentCentre(AbstractBaseModel, FolderMixin):
+    """Central document management system with draft and approved evidence versions"""
+    
+    class DocumentType(models.TextChoices):
+        POLICY = "policy", _("Policy")
+        PROCEDURE = "procedure", _("Procedure")
+        GUIDELINE = "guideline", _("Guideline")
+        REPORT = "report", _("Report")
+        CONTRACT = "contract", _("Contract")
+        CERTIFICATE = "certificate", _("Certificate")
+        MANUAL = "manual", _("Manual")
+        SOP = "sop", _("Standard Operating Procedure")
+        OTHER = "other", _("Other")
+    
+    class DocumentStatus(models.IntegerChoices):
+        DRAFT = 1, _("Draft")
+        IN_REVIEW = 2, _("In Review")
+        APPROVED = 3, _("Approved")
+        ARCHIVED = 4, _("Archived")
+        EXPIRED = 5, _("Expired")
+        DEPRECATED = 6, _("Deprecated")
+    
+    # Core document info
+    document_name = models.CharField(max_length=500, verbose_name=_("Document Name"))
+    document_type = models.CharField(
+        max_length=50,
+        choices=DocumentType.choices,
+        verbose_name=_("Document Type")
+    )
+    document_status = models.IntegerField(
+        choices=DocumentStatus.choices,
+        default=DocumentStatus.DRAFT,
+        verbose_name=_("Document Status")
+    )
+    
+    # Dual Evidence System
+    draft_evidence = models.OneToOneField(
+        Evidence,
+        on_delete=models.SET_NULL,
+        null=True,
+        blank=True,
+        verbose_name=_("Draft Evidence"),
+        related_name="draft_document"
+    )
+    
+    approved_evidence = models.OneToOneField(
+        Evidence,
+        on_delete=models.SET_NULL,
+        null=True,
+        blank=True,
+        verbose_name=_("Approved Evidence"),
+        related_name="approved_document"
+    )
+    
+    # User assignments
+    submitted_by = models.ForeignKey(
+        User,
+        on_delete=models.SET_NULL,
+        null=True,
+        blank=True,
+        related_name="submitted_documents",
+        verbose_name=_("Submitted By")
+    )
+    updated_by = models.ForeignKey(
+        User,
+        on_delete=models.SET_NULL,
+        null=True,
+        blank=True,
+        related_name="updated_documents",
+        verbose_name=_("Updated By")
+    )
+    document_owner = models.ForeignKey(
+        User,
+        on_delete=models.SET_NULL,
+        null=True,
+        blank=True,
+        related_name="owned_documents",
+        verbose_name=_("Document Owner")
+    )
+    approver = models.ForeignKey(
+        User,
+        on_delete=models.SET_NULL,
+        null=True,
+        blank=True,
+        related_name="approved_documents",
+        verbose_name=_("Approver")
+    )
+    
+    # Framework linkages
+    frameworks = models.ManyToManyField(
+        Framework,
+        blank=True,
+        verbose_name=_("Related Frameworks"),
+        related_name="documents"
+    )
+    
+    # Team linkages
+    teams = models.ManyToManyField(
+        "iam.Team",
+        blank=True,
+        verbose_name=_("Related Teams"),
+        related_name="documents"
+    )
+    
+    # Additional stakeholders (as M2M for better querying)
+    additional_stakeholders = models.ManyToManyField(
+        User,
+        blank=True,
+        verbose_name=_("Additional Stakeholders"),
+        related_name="stakeholder_documents"
+    )
+    
+    # Review cycle
+    creation_date = models.DateField(
+        default=date.today,
+        verbose_name=_("Creation Date")
+    )
+    last_review_date = models.DateField(
+        null=True,
+        blank=True,
+        verbose_name=_("Last Review Date")
+    )
+    review_frequency = models.IntegerField(
+        default=0,
+        verbose_name=_("Review Frequency (days)"),
+        help_text=_("Number of days between reviews (0 = no recurring review)")
+    )
+    next_review_date = models.DateField(
+        null=True,
+        blank=True,
+        verbose_name=_("Next Review Date")
+    )
+    approval_date = models.DateField(
+        null=True,
+        blank=True,
+        verbose_name=_("Approval Date")
+    )
+    
+    # Parent document for hierarchy (for document versions)
+    parent = models.ForeignKey(
+        'self',
+        on_delete=models.SET_NULL,
+        null=True,
+        blank=True,
+        related_name="versions",
+        verbose_name=_("Parent Document")
+    )
+    
+    # Document versioning
+    version = models.CharField(
+        max_length=20,
+        default="1.0",
+        verbose_name=_("Version")
+    )
+    
+    # Observation/Notes
+    observation = models.TextField(
+        null=True,
+        blank=True,
+        verbose_name=_("Observation/Notes")
+    )
+
+    perimeter = models.ForeignKey(
+        Perimeter,
+        on_delete=models.CASCADE,
+        null=True,
+        blank=True,
+        verbose_name=_("Perimeter"),
+        related_name="documents"
+    )
+    
+    fields_to_check = ["document_name", "document_type"]
+    
+    class Meta:
+        verbose_name = _("Document Centre")
+        verbose_name_plural = _("Document Centre")
+        ordering = ['-creation_date']
+        indexes = [
+            models.Index(fields=['document_status']),
+            models.Index(fields=['document_type']),
+            models.Index(fields=['next_review_date']),
+        ]
+    
+    def __str__(self):
+        return f"{self.document_name} v{self.version} ({self.get_document_status_display()})"
+    
+    def save(self, *args, **kwargs):
+        if not self.folder and self.perimeter:
+            self.folder = self.perimeter.folder
+    
+        # Auto-calculate next review date if review frequency is set
+        if self.review_frequency > 0:
+            if self.last_review_date:
+                self.next_review_date = self.last_review_date + timedelta(days=self.review_frequency)
+            elif self.approval_date:
+                self.next_review_date = self.approval_date + timedelta(days=self.review_frequency)
+            elif not self.next_review_date:
+                # If no dates set, use creation date + frequency
+                self.next_review_date = self.creation_date + timedelta(days=self.review_frequency)
+        
+        # Update document status based on evidence
+        if self.document_status == self.DocumentStatus.DRAFT and self.approved_evidence:
+            self.document_status = self.DocumentStatus.APPROVED
+            if not self.approval_date:
+                self.approval_date = date.today()
+        
+        super().save(*args, **kwargs)
+    
+    @property
+    def current_evidence(self):
+        """Get the active evidence based on document status"""
+        if self.document_status in [self.DocumentStatus.APPROVED, self.DocumentStatus.ARCHIVED] and self.approved_evidence:
+            return self.approved_evidence
+        return self.draft_evidence
+    
+    @property
+    def is_overdue_for_review(self):
+        """Check if document is overdue for review"""
+        if self.next_review_date and date.today() > self.next_review_date:
+            return True
+        return False
+    
+    @property
+    def days_until_review(self):
+        """Days until next review (negative if overdue)"""
+        if not self.next_review_date:
+            return None
+        return (self.next_review_date - date.today()).days
+    
+    def promote_to_approved(self, evidence=None):
+        """Promote draft evidence to approved evidence"""
+        if evidence:
+            self.approved_evidence = evidence
+        elif self.draft_evidence:
+            # Create a copy of draft evidence as approved evidence
+            new_evidence = Evidence.objects.create(
+                name=f"{self.draft_evidence.name} (Approved)",
+                description=self.draft_evidence.description,
+                folder=self.draft_evidence.folder,
+                owner=self.draft_evidence.owner.all(),
+                status=Evidence.Status.APPROVED,
+                is_published=True
+            )
+            # Copy the latest revision
+            latest_rev = self.draft_evidence.last_revision
+            if latest_rev:
+                EvidenceRevision.objects.create(
+                    evidence=new_evidence,
+                    version=1,
+                    attachment=latest_rev.attachment,
+                    link=latest_rev.link,
+                    observation=f"Approved version from {self.draft_evidence.name}"
+                )
+            self.approved_evidence = new_evidence
+        
+        self.document_status = self.DocumentStatus.APPROVED
+        self.approval_date = date.today()
+        self.save()
+    
+    def create_new_version(self):
+        """Create a new version of the document"""
+        new_doc = DocumentCentre.objects.create(
+            document_name=self.document_name,
+            document_type=self.document_type,
+            document_status=self.DocumentStatus.DRAFT,
+            parent=self,
+            submitted_by=self.submitted_by,
+            document_owner=self.document_owner,
+            version=self._get_next_version(),
+            frameworks=self.frameworks.all(),
+            teams=self.teams.all()
+        )
+        return new_doc
+    
+    def _get_next_version(self):
+        """Calculate next version number"""
+        try:
+            major, minor = map(int, self.version.split('.'))
+            return f"{major}.{minor + 1}"
+        except:
+            return "1.0"
 
 class Vulnerability(
     NameDescriptionMixin, FolderMixin, PublishInRootFolderMixin, FilteringLabelMixin
