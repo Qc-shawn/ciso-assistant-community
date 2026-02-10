@@ -2495,8 +2495,48 @@ class ComplianceAssessmentEvidenceSerializer(BaseModelSerializer):
         ]
 
 #-----------------------------Document Centre Serializers-----------------------------#
+class CustomDateField(serializers.DateField):
+    """Custom DateField that formats dates as DD/MM/YYYY"""
+    
+    def to_representation(self, value):
+        if value is None:
+            return None
+        
+        # Format as DD/MM/YYYY
+        return value.strftime('%d/%m/%Y')
+    
+    def to_internal_value(self, data):
+        # Accept multiple date formats for input
+        try:
+            # Try DD/MM/YYYY first
+            return datetime.strptime(data, '%d/%m/%Y').date()
+        except ValueError:
+            try:
+                # Try YYYY-MM-DD (ISO format)
+                return datetime.strptime(data, '%Y-%m-%d').date()
+            except ValueError:
+                # Try other common formats
+                for fmt in ['%m/%d/%Y', '%d-%m-%Y', '%Y/%m/%d']:
+                    try:
+                        return datetime.strptime(data, fmt).date()
+                    except ValueError:
+                        continue
+                raise serializers.ValidationError(
+                    f'Date has wrong format. Use DD/MM/YYYY. Received: {data}'
+                )
+            
 class DocumentCentreWriteSerializer(BaseModelSerializer):
     """Serializer for creating/updating DocumentCentre"""
+
+    # Use CustomDateField for all date fields
+    creation_date = CustomDateField(required=False)
+    last_review_date = CustomDateField(required=False, allow_null=True)
+    next_review_date = CustomDateField(required=False, allow_null=True)
+    approval_date = CustomDateField(required=False, allow_null=True)
+    
+    # Also format created_at and updated_at in read serializer
+    # created_at = serializers.SerializerMethodField()
+    # updated_at = serializers.SerializerMethodField()
     
     # Accept related objects as UUIDs
     draft_evidence = serializers.PrimaryKeyRelatedField(
@@ -2702,12 +2742,23 @@ class DocumentCentreWriteSerializer(BaseModelSerializer):
                 
         except Exception as e:
             logger.error(f"Failed to send stakeholder notifications: {str(e)}")
+
+    def get_created_at(self, obj):
+        """Format created_at as DD/MM/YYYY"""
+        if obj.created_at:
+            return obj.created_at.strftime('%d/%m/%Y')
+        return None
+    
+    def get_updated_at(self, obj):
+        """Format updated_at as DD/MM/YYYY"""
+        if obj.updated_at:
+            return obj.updated_at.strftime('%d/%m/%Y')
+        return None
     
     class Meta:
         model = DocumentCentre
         exclude = ["created_at", "updated_at", "is_published"]
         read_only_fields = ['submitted_by', 'updated_by']
-
 
 class DocumentCentreReadSerializer(DocumentCentreWriteSerializer):
     """Serializer for reading DocumentCentre with expanded relationships"""
@@ -2716,6 +2767,12 @@ class DocumentCentreReadSerializer(DocumentCentreWriteSerializer):
     folder = FieldsRelatedField()
     perimeter = FieldsRelatedField()
     
+    creation_date = CustomDateField()
+    last_review_date = CustomDateField()
+    next_review_date = CustomDateField()
+    approval_date = CustomDateField()
+    due_date = CustomDateField(source="get_due_date", read_only=True)
+
     # Expand evidence objects
     draft_evidence = FieldsRelatedField(fields=["id", "name", "status", "last_revision"])
     approved_evidence = FieldsRelatedField(fields=["id", "name", "status", "last_revision"])
@@ -2744,8 +2801,15 @@ class DocumentCentreReadSerializer(DocumentCentreWriteSerializer):
     is_overdue_for_review = serializers.BooleanField(read_only=True)
     days_until_review = serializers.IntegerField(read_only=True)
     
+    # Child count
+    child_count = serializers.SerializerMethodField()
+
     # Version information
     versions = serializers.SerializerMethodField()
+
+    def get_child_count(self, obj):
+        """Get number of child documents (versions)"""
+        return DocumentCentre.objects.filter(parent=obj).count()
     
     def get_current_evidence(self, obj):
         """Get current evidence based on document status"""
@@ -2785,7 +2849,6 @@ class DocumentCentreReadSerializer(DocumentCentreWriteSerializer):
         model = DocumentCentre
         fields = "__all__"
         read_only_fields = ['created_at', 'updated_at', 'is_published']
-
 
 class DocumentCentreImportExportSerializer(BaseModelSerializer):
     """Serializer for importing/exporting DocumentCentre"""
@@ -2831,7 +2894,6 @@ class DocumentCentreImportExportSerializer(BaseModelSerializer):
             "created_at",
             "updated_at",
         ]
-
 
 class DocumentCentreDuplicateSerializer(BaseModelSerializer):
     """Serializer for duplicating DocumentCentre"""
