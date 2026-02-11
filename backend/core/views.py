@@ -7559,6 +7559,16 @@ class DocumentCentreViewSet(BaseModelViewSet):
         'next_review_date',
         'approval_date',
     ]
+
+    @action(detail=True, name="Get write data")
+    def object(self, request, pk):
+        """
+        Get document with write data (should return same as retrieve)
+        """
+        # Use retrieve serializer instead of update serializer
+        serializer_class = self.get_serializer_class(action="retrieve")
+        instance = self.get_object()
+        return Response(serializer_class(instance).data)
     
     @action(detail=False, name="Get document type choices")
     def document_types(self, request):
