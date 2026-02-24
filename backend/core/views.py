@@ -7606,8 +7606,8 @@ class DocumentCentreViewSet(BaseModelViewSet):
         
         if evidence_id:
             try:
-                evidence = Evidence.objects.get(id=evidence_id)
-            except Evidence.DoesNotExist:
+                evidence = DocumentCentreEvidence.objects.get(id=evidence_id)
+            except DocumentCentreEvidence.DoesNotExist:
                 return Response(
                     {'detail': 'Specified evidence not found.'},
                     status=status.HTTP_404_NOT_FOUND
@@ -7635,51 +7635,6 @@ class DocumentCentreViewSet(BaseModelViewSet):
                 status=status.HTTP_400_BAD_REQUEST
             )
     
-    @action(detail=True, methods=['post'])
-    def create_version(self, request, pk):
-        """
-        Create a new version of the document
-        """
-        document = self.get_object()
-        
-        # Check permission
-        # if not RoleAssignment.is_access_allowed(
-        #     user=request.user,
-        #     perm=Permission.objects.get(codename='add_documentcentre'),
-        #     folder=DocumentCentre.folder,
-        # ):
-        #     return Response(
-        #         status=status.HTTP_403_FORBIDDEN
-        #     )
-        
-        try:
-            new_version = document.create_new_version()
-            
-            # Copy additional data if provided
-            if 'draft_evidence_id' in request.data:
-                try:
-                    draft_evidence = Evidence.objects.get(id=request.data['draft_evidence_id'])
-                    new_version.draft_evidence = draft_evidence
-                    new_version.save()
-                except Evidence.DoesNotExist:
-                    pass
-            
-            serializer_class = self.get_serializer_class(action='retrieve')
-            serializer = serializer_class(new_version, context=self.get_serializer_context())
-            
-            return Response(
-                {
-                    'detail': 'New version created successfully.',
-                    'new_document': serializer.data
-                },
-                status=status.HTTP_201_CREATED
-            )
-        except Exception as e:
-            return Response(
-                {'detail': f'Error creating new version: {str(e)}'},
-                status=status.HTTP_400_BAD_REQUEST
-            )
-        
     @action(detail=True, methods=['get'])
     def child_documents(self, request, pk):
         """
@@ -7766,74 +7721,80 @@ class DocumentCentreViewSet(BaseModelViewSet):
             # Collect all evidence
             all_evidence = []
             
+            # Helper function to format evidence data
+            def format_evidence(evidence, evidence_type):
+                if not evidence:
+                    return None
+                    
+                evidence_data = {
+                    'id': str(evidence.id),
+                    'name': evidence.name,
+                    'type': evidence_type,
+                    'status': evidence.get_status_display(),
+                    'created_at': evidence.created_at,
+                    'version': evidence.version,
+                    'is_current': evidence.is_current,
+                    'description': evidence.description,
+                    'notes': evidence.notes,
+                    'review_date': evidence.review_date,
+                    'expiry_date': evidence.expiry_date,
+                }
+                
+                # Handle creator (instead of owner M2M)
+                if evidence.created_by:
+                    evidence_data['created_by'] = {
+                        'id': str(evidence.created_by.id),
+                        'name': f"{evidence.created_by.first_name} {evidence.created_by.last_name}",
+                        'email': evidence.created_by.email
+                    }
+                
+                # Handle attachment (instead of revision)
+                if evidence.attachment:
+                    evidence_data['attachment'] = {
+                        'url': evidence.attachment.url,
+                        'name': evidence.file_name or evidence.attachment.name,
+                        'size': evidence.formatted_file_size,
+                        'mime_type': evidence.mime_type,
+                        'checksum': evidence.checksum
+                    }
+                
+                # Handle link
+                if evidence.link:
+                    evidence_data['link'] = evidence.link
+                
+                return evidence_data
+            
             # 1. Draft Evidence
             if document.draft_evidence:
-                draft_evidence = document.draft_evidence
-                last_revision = draft_evidence.last_revision
-                all_evidence.append({
-                    'id': str(draft_evidence.id),
-                    'name': draft_evidence.name,
-                    'type': 'draft',
-                    'status': draft_evidence.get_status_display(),
-                    'created_at': draft_evidence.created_at,
-                    'owner': [{
-                        'id': str(owner.id),
-                        'name': f"{owner.first_name} {owner.last_name}"
-                    } for owner in draft_evidence.owner.all()],
-                    'revision': {
-                        'version': last_revision.version if last_revision else None,
-                        'attachment': last_revision.attachment.url if last_revision and last_revision.attachment else None,
-                        'link': last_revision.link if last_revision else None,
-                        'observation': last_revision.observation if last_revision else None,
-                        'size': last_revision.get_size() if last_revision else None
-                    } if last_revision else None
-                })
+                all_evidence.append(format_evidence(document.draft_evidence, 'draft'))
             
             # 2. Approved Evidence
             if document.approved_evidence:
-                approved_evidence = document.approved_evidence
-                last_revision = approved_evidence.last_revision
-                all_evidence.append({
-                    'id': str(approved_evidence.id),
-                    'name': approved_evidence.name,
-                    'type': 'approved',
-                    'status': approved_evidence.get_status_display(),
-                    'created_at': approved_evidence.created_at,
-                    'owner': [{
-                        'id': str(owner.id),
-                        'name': f"{owner.first_name} {owner.last_name}"
-                    } for owner in approved_evidence.owner.all()],
-                    'revision': {
-                        'version': last_revision.version if last_revision else None,
-                        'attachment': last_revision.attachment.url if last_revision and last_revision.attachment else None,
-                        'link': last_revision.link if last_revision else None,
-                        'observation': last_revision.observation if last_revision else None,
-                        'size': last_revision.get_size() if last_revision else None
-                    } if last_revision else None
-                })
+                all_evidence.append(format_evidence(document.approved_evidence, 'approved'))
             
-            # 3. Evidence from linked frameworks (if any)
-            framework_evidence = []
-            for framework in document.frameworks.all():
-                # Get evidence linked to this framework through requirement assessments
-                # (This depends on your data model - adjust as needed)
-                pass
+            # 3. Additional evidence linked through document_evidences relationship
+            # This gets all evidence that has this document as parent (including non-current versions)
+            additional_evidence = DocumentCentreEvidence.objects.filter(
+                document=document
+            ).exclude(
+                id__in=[e.id for e in [document.draft_evidence, document.approved_evidence] if e]
+            ).order_by('-created_at')
+            
+            for evidence in additional_evidence:
+                all_evidence.append(format_evidence(evidence, 'additional'))
             
             # 4. Current evidence (based on document status)
             current_evidence = document.current_evidence
             current_evidence_info = None
             if current_evidence:
-                last_revision = current_evidence.last_revision
                 current_evidence_info = {
                     'id': str(current_evidence.id),
                     'name': current_evidence.name,
                     'type': 'current',
                     'is_draft': current_evidence == document.draft_evidence,
                     'is_approved': current_evidence == document.approved_evidence,
-                    'revision': {
-                        'attachment': last_revision.attachment.url if last_revision and last_revision.attachment else None,
-                        'link': last_revision.link if last_revision else None
-                    } if last_revision else None
+                    'attachment': current_evidence.attachment.url if current_evidence.attachment else None,
+                    'link': current_evidence.link if current_evidence.link else None
                 }
             
             return Response({
@@ -7849,7 +7810,8 @@ class DocumentCentreViewSet(BaseModelViewSet):
                     'has_draft': document.draft_evidence is not None,
                     'has_approved': document.approved_evidence is not None,
                     'draft_evidence_id': str(document.draft_evidence.id) if document.draft_evidence else None,
-                    'approved_evidence_id': str(document.approved_evidence.id) if document.approved_evidence else None
+                    'approved_evidence_id': str(document.approved_evidence.id) if document.approved_evidence else None,
+                    'total_versions': DocumentCentreEvidence.objects.filter(document=document).count()
                 }
             })
             
@@ -7879,7 +7841,7 @@ class DocumentCentreViewSet(BaseModelViewSet):
                 next_review_date__lt=today,
                 document_status__in=[
                     DocumentCentre.DocumentStatus.APPROVED.value,
-                    DocumentCentre.DocumentStatus.ARCHIVED.value
+                    DocumentCentre.DocumentStatus.IMPLEMENTED.value
                 ]
             ).order_by('next_review_date')
             
@@ -7952,41 +7914,6 @@ class DocumentCentreViewSet(BaseModelViewSet):
             'results': results
         })
     
-    @action(detail=True, methods=['post'])
-    def complete_review(self, request, pk):
-        """
-        Mark a document as reviewed and update review dates
-        """
-        document = self.get_object()
-        
-        # Check permission
-        # if not RoleAssignment.is_access_allowed(
-        #     user=request.user,
-        #     perm=Permission.objects.get(codename='change_documentcentre'),
-        #     folder=DocumentCentre.folder,
-        #     object=DocumentCentre
-        # ):
-        #     return Response(
-        #         {'detail': 'You do not have permission to review this document.'},
-        #         status=status.HTTP_403_FORBIDDEN
-        #     )
-        
-        # Update review date
-        document.last_review_date = date.today()
-        
-        # Calculate next review date if frequency is set
-        if document.review_frequency > 0:
-            document.next_review_date = document.last_review_date + timedelta(
-                days=document.review_frequency
-            )
-        
-        document.save()
-        
-        return Response(
-            {'detail': 'Document review completed successfully.', 'document': str(document)},
-            status=status.HTTP_200_OK
-        )
-    
     @action(detail=False, methods=['get'])
     def statistics(self, request):
         """
@@ -8002,7 +7929,7 @@ class DocumentCentreViewSet(BaseModelViewSet):
                 next_review_date__lt=date.today(),
                 document_status__in=[
                     DocumentCentre.DocumentStatus.APPROVED,
-                    DocumentCentre.DocumentStatus.ARCHIVED
+                    DocumentCentre.DocumentStatus.IMPLEMENTED
                 ]
             ).count(),
             'upcoming': queryset.filter(
@@ -8010,7 +7937,7 @@ class DocumentCentreViewSet(BaseModelViewSet):
                 next_review_date__lte=date.today() + timedelta(days=30),
                 document_status__in=[
                     DocumentCentre.DocumentStatus.APPROVED,
-                    DocumentCentre.DocumentStatus.ARCHIVED
+                    DocumentCentre.DocumentStatus.IMPLEMENTED
                 ]
             ).count(),
         }
@@ -8040,9 +7967,9 @@ class DocumentCentreViewSet(BaseModelViewSet):
         # Handle evidence IDs
         if 'draft_evidence_id' in request.data:
             try:
-                draft_evidence = Evidence.objects.get(id=request.data['draft_evidence_id'])
+                draft_evidence = DocumentCentreEvidence.objects.get(id=request.data['draft_evidence_id'])
                 request.data['draft_evidence'] = str(draft_evidence.id)
-            except Evidence.DoesNotExist:
+            except DocumentCentreEvidence.DoesNotExist:
                 return Response(
                     {'detail': 'Draft evidence not found.'},
                     status=status.HTTP_400_BAD_REQUEST
@@ -8050,9 +7977,9 @@ class DocumentCentreViewSet(BaseModelViewSet):
         
         if 'approved_evidence_id' in request.data:
             try:
-                approved_evidence = Evidence.objects.get(id=request.data['approved_evidence_id'])
+                approved_evidence = DocumentCentreEvidence.objects.get(id=request.data['approved_evidence_id'])
                 request.data['approved_evidence'] = str(approved_evidence.id)
-            except Evidence.DoesNotExist:
+            except DocumentCentreEvidence.DoesNotExist:
                 return Response(
                     {'detail': 'Approved evidence not found.'},
                     status=status.HTTP_400_BAD_REQUEST
@@ -8069,9 +7996,9 @@ class DocumentCentreViewSet(BaseModelViewSet):
         # Handle evidence IDs
         if 'draft_evidence_id' in request.data:
             try:
-                draft_evidence = Evidence.objects.get(id=request.data['draft_evidence_id'])
+                draft_evidence = DocumentCentreEvidence.objects.get(id=request.data['draft_evidence_id'])
                 request.data['draft_evidence'] = str(draft_evidence.id)
-            except Evidence.DoesNotExist:
+            except DocumentCentreEvidence.DoesNotExist:
                 return Response(
                     {'detail': 'Draft evidence not found.'},
                     status=status.HTTP_400_BAD_REQUEST
@@ -8079,12 +8006,371 @@ class DocumentCentreViewSet(BaseModelViewSet):
         
         if 'approved_evidence_id' in request.data:
             try:
-                approved_evidence = Evidence.objects.get(id=request.data['approved_evidence_id'])
+                approved_evidence = DocumentCentreEvidence.objects.get(id=request.data['approved_evidence_id'])
                 request.data['approved_evidence'] = str(approved_evidence.id)
-            except Evidence.DoesNotExist:
+            except DocumentCentreEvidence.DoesNotExist:
                 return Response(
                     {'detail': 'Approved evidence not found.'},
                     status=status.HTTP_400_BAD_REQUEST
                 )
+        
+        return super().update(request, *args, **kwargs)
+    
+# 
+
+class DocumentCentreEvidenceViewSet(BaseModelViewSet):
+    """
+    API endpoint for Document Centre Evidence management
+    """
+    
+    model = DocumentCentreEvidence
+    filterset_class = DocumentCentreEvidenceFilter
+    search_fields = ['name', 'description', 'notes', 'file_name']
+    permission_classes = [permissions.IsAuthenticated] 
+
+    def get_serializer_class(self, action=None):
+        """Return appropriate serializer based on action"""
+        if action is None:
+            action = self.action
+        
+        if action in ['retrieve', 'list']:
+            return DocumentCentreEvidenceReadSerializer
+        elif action in ['create', 'update', 'partial_update']:
+            return DocumentCentreEvidenceWriteSerializer
+        elif action == 'create_version':
+            return DocumentCentreEvidenceVersionSerializer
+        elif action == 'promote':
+            return DocumentCentreEvidencePromoteSerializer
+        elif action == 'bulk_upload':
+            return DocumentCentreEvidenceBulkUploadSerializer
+        
+        return super().get_serializer_class(action)
+    
+    def get_queryset(self):
+        """Get queryset with optimizations"""
+        queryset = DocumentCentreEvidence.objects.all()
+        
+        # Select related fields for efficiency
+        if self.action in ['retrieve', 'list']:
+            queryset = queryset.select_related(
+                'folder',
+                'document',
+                'created_by',
+                'previous_version'
+            ).prefetch_related(
+                'next_versions'
+            )
+        
+        return queryset
+    
+    @action(detail=False, methods=['get'])
+    def status_choices(self, request):
+        """Get available status choices"""
+        return Response(dict(DocumentCentreEvidence.Status.choices))
+    
+    @action(detail=True, methods=['get'])
+    def download(self, request, pk):
+        """
+        Download evidence attachment
+        """
+        evidence = self.get_object()
+        
+        if not evidence.attachment or not evidence.is_attachment_valid:
+            return Response(
+                {'detail': 'No valid attachment found'},
+                status=status.HTTP_404_NOT_FOUND
+            )
+        
+        try:
+            file_path = evidence.attachment.path
+            if os.path.exists(file_path):
+                with open(file_path, 'rb') as f:
+                    response = HttpResponse(
+                        f.read(),
+                        content_type=evidence.mime_type or 'application/octet-stream'
+                    )
+                    response['Content-Disposition'] = f'attachment; filename="{evidence.file_name or evidence.name}"'
+                    response['Content-Length'] = evidence.file_size
+                    return response
+            else:
+                return Response(
+                    {'detail': 'File not found on server'},
+                    status=status.HTTP_404_NOT_FOUND
+                )
+        except Exception as e:
+            logger.error(f"Error downloading evidence: {str(e)}", exc_info=e)
+            return Response(
+                {'detail': f'Error downloading file: {str(e)}'},
+                status=status.HTTP_500_INTERNAL_SERVER_ERROR
+            )
+    
+    @action(detail=False, methods=['post'])
+    def bulk_upload(self, request):
+        """
+        Bulk upload multiple evidence files for a document
+        """
+        serializer = self.get_serializer(data=request.data)
+        serializer.is_valid(raise_exception=True)
+        
+        try:
+            document = DocumentCentre.objects.get(id=serializer.validated_data['document_id'])
+        except DocumentCentre.DoesNotExist:
+            return Response(
+                {'detail': 'Document not found'},
+                status=status.HTTP_404_NOT_FOUND
+            )
+        
+        files = serializer.validated_data['files']
+        default_status = serializer.validated_data.get('default_status', DocumentCentreEvidence.Status.DRAFT)
+        notes = serializer.validated_data.get('notes', '')
+        
+        created_evidences = []
+        errors = []
+        
+        for file in files:
+            try:
+                # Check if evidence with same name exists
+                base_name = os.path.splitext(file.name)[0]
+                
+                evidence = DocumentCentreEvidence.objects.create(
+                    name=base_name[:500],  # Truncate if too long
+                    document=document,
+                    status=default_status,
+                    created_by=request.user,
+                    folder=document.folder,
+                    notes=notes,
+                    attachment=file
+                )
+                
+                created_evidences.append(evidence.id)
+                
+            except Exception as e:
+                errors.append({
+                    'file': file.name,
+                    'error': str(e)
+                })
+        
+        response_data = {
+            'detail': f'Successfully uploaded {len(created_evidences)} files',
+            'created_count': len(created_evidences),
+            'created_ids': [str(id) for id in created_evidences],
+        }
+        
+        if errors:
+            response_data['errors'] = errors
+        
+        status_code = status.HTTP_201_CREATED if created_evidences else status.HTTP_400_BAD_REQUEST
+        
+        return Response(response_data, status=status_code)
+    
+    @action(detail=False, methods=['get'])
+    def by_document(self, request):
+        """
+        Get all evidence for a specific document
+        """
+        document_id = request.query_params.get('document_id')
+        include_versions = request.query_params.get('include_versions', 'false').lower() == 'true'
+        
+        if not document_id:
+            return Response(
+                {'detail': 'document_id parameter is required'},
+                status=status.HTTP_400_BAD_REQUEST
+            )
+        
+        try:
+            document = DocumentCentre.objects.get(id=document_id)
+        except DocumentCentre.DoesNotExist:
+            return Response(
+                {'detail': 'Document not found'},
+                status=status.HTTP_404_NOT_FOUND
+            )
+        
+        queryset = DocumentCentreEvidence.objects.filter(document=document)
+        
+        if not include_versions:
+            # Get only current versions if not including all versions
+            queryset = queryset.filter(is_current=True)
+        
+        # Apply filters
+        queryset = self.filter_queryset(queryset)
+        
+        # Paginate
+        page = self.paginate_queryset(queryset)
+        if page is not None:
+            serializer = DocumentCentreEvidenceReadSerializer(
+                page,
+                many=True,
+                context=self.get_serializer_context()
+            )
+            return self.get_paginated_response(serializer.data)
+        
+        serializer = DocumentCentreEvidenceReadSerializer(
+            queryset,
+            many=True,
+            context=self.get_serializer_context()
+        )
+        
+        return Response({
+            'document': {
+                'id': str(document.id),
+                'name': document.document_name,
+                'status': document.get_document_status_display()
+            },
+            'evidence': serializer.data,
+            'count': len(serializer.data)
+        })
+    
+    @action(detail=False, methods=['get'])
+    def expiring_soon(self, request):
+        """
+        Get evidence expiring within specified days
+        """
+        days = int(request.query_params.get('days', 30))
+        
+        today = timezone.now().date()
+        expiry_threshold = today + timezone.timedelta(days=days)
+        
+        queryset = self.get_queryset().filter(
+            expiry_date__isnull=False,
+            expiry_date__gte=today,
+            expiry_date__lte=expiry_threshold,
+            status=DocumentCentreEvidence.Status.APPROVED
+        ).order_by('expiry_date')
+        
+        queryset = self.filter_queryset(queryset)
+        
+        page = self.paginate_queryset(queryset)
+        if page is not None:
+            serializer = DocumentCentreEvidenceReadSerializer(
+                page,
+                many=True,
+                context=self.get_serializer_context()
+            )
+            return self.get_paginated_response(serializer.data)
+        
+        serializer = DocumentCentreEvidenceReadSerializer(
+            queryset,
+            many=True,
+            context=self.get_serializer_context()
+        )
+        
+        return Response({
+            'threshold_days': days,
+            'expiring_count': queryset.count(),
+            'results': serializer.data
+        })
+    
+    @action(detail=False, methods=['get'])
+    def expired(self, request):
+        """
+        Get expired evidence
+        """
+        today = timezone.now().date()
+        
+        queryset = self.get_queryset().filter(
+            expiry_date__isnull=False,
+            expiry_date__lt=today
+        ).order_by('-expiry_date')
+        
+        queryset = self.filter_queryset(queryset)
+        
+        page = self.paginate_queryset(queryset)
+        if page is not None:
+            serializer = DocumentCentreEvidenceReadSerializer(
+                page,
+                many=True,
+                context=self.get_serializer_context()
+            )
+            return self.get_paginated_response(serializer.data)
+        
+        serializer = DocumentCentreEvidenceReadSerializer(
+            queryset,
+            many=True,
+            context=self.get_serializer_context()
+        )
+        
+        return Response({
+            'expired_count': queryset.count(),
+            'results': serializer.data
+        })
+    
+    @action(detail=False, methods=['get'])
+    def statistics(self, request):
+        """
+        Get evidence statistics
+        """
+        queryset = self.filter_queryset(self.get_queryset())
+        
+        today = timezone.now().date()
+        
+        stats = {
+            'total': queryset.count(),
+            'total_current': queryset.filter(is_current=True).count(),
+            'total_size': queryset.aggregate(total=Sum('file_size'))['total'] or 0,
+            'by_status': {},
+            'by_document': {},
+            'expiring_soon': queryset.filter(
+                expiry_date__isnull=False,
+                expiry_date__gte=today,
+                expiry_date__lte=today + timezone.timedelta(days=30),
+                status=DocumentCentreEvidence.Status.APPROVED
+            ).count(),
+            'expired': queryset.filter(
+                expiry_date__isnull=False,
+                expiry_date__lt=today
+            ).count(),
+        }
+        
+        # Count by status
+        for status_code, label in DocumentCentreEvidence.Status.choices:
+            stats['by_status'][status_code] = {
+                'label': label,
+                'count': queryset.filter(status=status_code).count()
+            }
+        
+        # Count by document (top 5)
+        doc_counts = queryset.values(
+            'document__id', 'document__document_name'
+        ).annotate(
+            count=Count('id')
+        ).order_by('-count')[:5]
+        
+        for doc in doc_counts:
+            if doc['document__id']:
+                stats['by_document'][str(doc['document__id'])] = {
+                    'name': doc['document__document_name'],
+                    'count': doc['count']
+                }
+        
+        # Format total size
+        size = stats['total_size']
+        if size < 1024:
+            stats['total_size_formatted'] = f"{size} B"
+        elif size < 1024 * 1024:
+            stats['total_size_formatted'] = f"{size / 1024:.1f} KB"
+        elif size < 1024 * 1024 * 1024:
+            stats['total_size_formatted'] = f"{size / 1024 / 1024:.1f} MB"
+        else:
+            stats['total_size_formatted'] = f"{size / 1024 / 1024 / 1024:.1f} GB"
+        
+        return Response(stats)
+    
+    def create(self, request, *args, **kwargs):
+        """Override create to handle file upload"""
+        self._process_request_data(request)
+        
+        # Handle file upload
+        if 'attachment' in request.FILES:
+            request.data['attachment'] = request.FILES['attachment']
+        
+        return super().create(request, *args, **kwargs)
+    
+    def update(self, request, *args, **kwargs):
+        """Override update to handle file upload"""
+        self._process_request_data(request)
+        
+        # Handle file upload
+        if 'attachment' in request.FILES:
+            request.data['attachment'] = request.FILES['attachment']
         
         return super().update(request, *args, **kwargs)

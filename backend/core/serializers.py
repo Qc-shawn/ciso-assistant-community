@@ -2540,14 +2540,14 @@ class DocumentCentreWriteSerializer(BaseModelSerializer):
     
     # Accept related objects as UUIDs
     draft_evidence = serializers.PrimaryKeyRelatedField(
-        queryset=Evidence.objects.all(),
+        queryset=DocumentCentreEvidence.objects.all(),
         required=False,
         allow_null=True,
         write_only=True
     )
     
     approved_evidence = serializers.PrimaryKeyRelatedField(
-        queryset=Evidence.objects.all(),
+        queryset=DocumentCentreEvidence.objects.all(),
         required=False,
         allow_null=True,
         write_only=True
@@ -2815,13 +2815,27 @@ class DocumentCentreReadSerializer(DocumentCentreWriteSerializer):
         """Get current evidence based on document status"""
         current = obj.current_evidence
         if current:
-            return {
-                "id": current.id,
-                "name": current.name,
-                "status": current.get_status_display(),
-                "size": current.get_size(),
-                "url": current.last_revision.attachment.url if current.last_revision and current.last_revision.attachment else None
-            }
+            # Check if it's DocumentCentreEvidence (has formatted_file_size)
+            if hasattr(current, 'formatted_file_size'):
+                return {
+                    "id": current.id,
+                    "name": current.name,
+                    "status": current.get_status_display(),
+                    "size": current.formatted_file_size,  # Use property instead of method
+                    "url": current.attachment.url if current.attachment else None,
+                    "version": current.version,
+                    "is_current": current.is_current,
+                    "mime_type": current.mime_type
+                }
+            # Fallback for old Evidence model (if still used)
+            else:
+                return {
+                    "id": current.id,
+                    "name": current.name,
+                    "status": current.get_status_display(),
+                    "size": current.get_size() if hasattr(current, 'get_size') else None,
+                    "url": current.last_revision.attachment.url if hasattr(current, 'last_revision') and current.last_revision and current.last_revision.attachment else None
+                }
         return None
     
     def get_versions(self, obj):
@@ -2954,3 +2968,279 @@ class DocumentCentreReviewSerializer(serializers.Serializer):
             })
         
         return attrs
+    
+# DocumentCentreEvidence serializers
+
+class DocumentCentreEvidenceWriteSerializer(BaseModelSerializer):
+    """
+    Serializer for creating/updating DocumentCentreEvidence
+    """
+    
+    attachment = serializers.FileField(
+        required=False,
+        allow_null=True,
+        write_only=True
+    )
+    
+    document = serializers.PrimaryKeyRelatedField(
+        queryset=DocumentCentre.objects.all(),
+        required=False,
+        allow_null=True
+    )
+    
+    created_by = serializers.PrimaryKeyRelatedField(
+        queryset=User.objects.all(),
+        required=False,
+        allow_null=True
+    )
+    
+    previous_version = serializers.PrimaryKeyRelatedField(
+        queryset=DocumentCentreEvidence.objects.all(),
+        required=False,
+        allow_null=True
+    )
+    
+    def validate(self, attrs):
+        """Validate that either attachment or link is provided"""
+        attachment = attrs.get('attachment')
+        link = attrs.get('link')
+        
+        if not attachment and not link:
+            raise serializers.ValidationError(
+                "Either attachment or link must be provided"
+            )
+        
+        return attrs
+    
+    def create(self, validated_data):
+        # Set created_by if not provided
+        if not validated_data.get('created_by'):
+            validated_data['created_by'] = self.context['request'].user
+        
+        # Set folder from document if not provided
+        if not validated_data.get('folder') and validated_data.get('document'):
+            validated_data['folder'] = validated_data['document'].folder
+        
+        return super().create(validated_data)
+    
+    def update(self, instance, validated_data):
+        # Handle attachment update
+        if 'attachment' in validated_data and validated_data['attachment']:
+            # If updating attachment, create new version instead of updating
+            if instance.attachment:
+                new_instance = instance.create_new_version(user=self.context['request'].user)
+                new_instance.attachment = validated_data.pop('attachment')
+                new_instance.save()
+                return new_instance
+        
+        return super().update(instance, validated_data)
+    
+    class Meta:
+        model = DocumentCentreEvidence
+        exclude = ['created_at', 'updated_at', 'is_published']
+        read_only_fields = ['checksum', 'file_size', 'file_name', 'mime_type']
+
+
+class DocumentCentreEvidenceReadSerializer(DocumentCentreEvidenceWriteSerializer):
+    """
+    Serializer for reading DocumentCentreEvidence with expanded relationships
+    """
+    
+    path = PathField(read_only=True)
+    folder = FieldsRelatedField()
+    document = FieldsRelatedField(fields=["id", "document_name", "version", "document_status"])
+    created_by = FieldsRelatedField(fields=["id", "first_name", "last_name", "email"])
+    previous_version = FieldsRelatedField(fields=["id", "name", "version"])
+    
+    status = serializers.CharField(source="get_status_display")
+    formatted_file_size = serializers.CharField(read_only=True)
+    is_attachment_valid = serializers.BooleanField(read_only=True)
+    
+    # Version history
+    version_history = serializers.SerializerMethodField()
+    
+    # Download URL
+    download_url = serializers.SerializerMethodField()
+    
+    def get_version_history(self, obj):
+        """Get all versions of this evidence"""
+        if obj.document:
+            versions = DocumentCentreEvidence.objects.filter(
+                document=obj.document,
+                name=obj.name
+            ).order_by('-version')
+            
+            return [
+                {
+                    'id': str(v.id),
+                    'version': v.version,
+                    'status': v.get_status_display(),
+                    'created_at': v.created_at,
+                    'is_current': v.is_current,
+                    'created_by': {
+                        'id': str(v.created_by.id),
+                        'name': f"{v.created_by.first_name} {v.created_by.last_name}"
+                    } if v.created_by else None
+                }
+                for v in versions
+            ]
+        return []
+    
+    def get_download_url(self, obj):
+        """Get download URL for attachment"""
+        if obj.attachment:
+            return obj.attachment.url
+        return None
+    
+    class Meta:
+        model = DocumentCentreEvidence
+        fields = "__all__"
+        read_only_fields = ['created_at', 'updated_at', 'is_published']
+
+
+class DocumentCentreEvidenceVersionSerializer(serializers.Serializer):
+    """
+    Serializer for creating a new version
+    """
+    
+    attachment = serializers.FileField(required=False)
+    link = serializers.URLField(required=False)
+    notes = serializers.CharField(required=False, allow_blank=True)
+    create_as_current = serializers.BooleanField(default=True)
+    
+    def validate(self, attrs):
+        if not attrs.get('attachment') and not attrs.get('link'):
+            raise serializers.ValidationError(
+                "Either attachment or link must be provided for new version"
+            )
+        return attrs
+
+
+class DocumentCentreEvidenceBulkUploadSerializer(serializers.Serializer):
+    """
+    Serializer for bulk uploading evidence
+    """
+    
+    files = serializers.ListField(
+        child=serializers.FileField(),
+        write_only=True
+    )
+    document_id = serializers.UUIDField(required=True)
+    default_status = serializers.ChoiceField(
+        choices=DocumentCentreEvidence.Status.choices,
+        default=DocumentCentreEvidence.Status.DRAFT
+    )
+    notes = serializers.CharField(required=False, allow_blank=True)
+
+
+class DocumentCentreEvidencePromoteSerializer(serializers.Serializer):
+    """
+    Serializer for promoting evidence status
+    """
+    
+    new_status = serializers.ChoiceField(
+        choices=DocumentCentreEvidence.Status.choices
+    )
+    review_notes = serializers.CharField(required=False, allow_blank=True)
+    review_date = serializers.DateField(required=False)
+    expiry_date = serializers.DateField(required=False)
+
+
+class DocumentCentreEvidenceImportExportSerializer(BaseModelSerializer):
+    """
+    Serializer for importing/exporting DocumentCentreEvidence
+    """
+    
+    folder = HashSlugRelatedField(slug_field="pk", read_only=True)
+    document = HashSlugRelatedField(slug_field="pk", read_only=True)
+    created_by = HashSlugRelatedField(slug_field="pk", read_only=True)
+    previous_version = HashSlugRelatedField(slug_field="pk", read_only=True)
+    
+    class Meta:
+        model = DocumentCentreEvidence
+        fields = [
+            "name",
+            "description",
+            "status",
+            "version",
+            "document",
+            "created_by",
+            "link",
+            "notes",
+            "review_date",
+            "expiry_date",
+            "is_current",
+            "folder",
+            "created_at",
+            "updated_at",
+        ]
+    
+import django_filters as df
+
+class DocumentCentreEvidenceFilter(df.FilterSet):
+    """
+    FilterSet for DocumentCentreEvidence
+    """
+    
+    folder = df.ModelMultipleChoiceFilter(
+        queryset=Folder.objects.all(),
+        field_name='folder__id',
+        to_field_name='id'
+    )
+    
+    document = df.ModelMultipleChoiceFilter(
+        queryset=DocumentCentre.objects.all(),
+        field_name='document__id',
+        to_field_name='id'
+    )
+    
+    status = df.MultipleChoiceFilter(
+        choices=DocumentCentreEvidence.Status.choices,
+    )
+    
+    created_by = df.ModelMultipleChoiceFilter(
+        queryset=User.objects.all(),
+    )
+    
+    # Text search
+    search = df.CharFilter(method='filter_search')
+    
+    # Date ranges
+    created_at = df.DateFromToRangeFilter()
+    updated_at = df.DateFromToRangeFilter()
+    review_date = df.DateFromToRangeFilter()
+    expiry_date = df.DateFromToRangeFilter()
+    
+    # Boolean filters
+    is_current = df.BooleanFilter()
+    has_attachment = df.BooleanFilter(method='filter_has_attachment')
+    
+    class Meta:
+        model = DocumentCentreEvidence
+        fields = [
+            'folder',
+            'document',
+            'status',
+            'created_by',
+            'is_current',
+            'version',
+            'review_date',
+            'expiry_date',
+            'created_at',
+            'updated_at',
+        ]
+    
+    def filter_search(self, queryset, name, value):
+        """Search across multiple text fields"""
+        return queryset.filter(
+            models.Q(name__icontains=value) |
+            models.Q(description__icontains=value) |
+            models.Q(notes__icontains=value) |
+            models.Q(file_name__icontains=value)
+        )
+    
+    def filter_has_attachment(self, queryset, name, value):
+        """Filter by presence of attachment"""
+        if value:
+            return queryset.exclude(attachment__isnull=True).exclude(attachment='')
+        return queryset.filter(models.Q(attachment__isnull=True) | models.Q(attachment=''))

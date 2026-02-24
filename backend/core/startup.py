@@ -79,6 +79,10 @@ READER_PERMISSIONS_LIST = [
     "view_quantitativeriskstudy",
     "view_quantitativeriskscenario",
     "view_quantitativeriskhypothesis",
+    "view_documentcentre",  
+    "view_documentcentreevidence",
+    "review_documentcentreevidence",
+    "version_documentcentreevidence",
 ]
 
 APPROVER_PERMISSIONS_LIST = [
@@ -147,6 +151,14 @@ APPROVER_PERMISSIONS_LIST = [
     "view_quantitativeriskstudy",
     "view_quantitativeriskscenario",
     "view_quantitativeriskhypothesis",
+    "view_documentcentre",  
+    "approve_documentcentre",
+    "implement_documentcentre",
+    "view_documentcentreevidence",
+    "approve_documentcentreevidence",
+    "review_documentcentreevidence",
+    "download_documentcentreevidence",
+    "version_documentcentreevidence",
 ]
 
 ANALYST_PERMISSIONS_LIST = [
@@ -362,6 +374,16 @@ ANALYST_PERMISSIONS_LIST = [
     "change_rightrequest",
     "view_rightrequest",
     "delete_rightrequest",
+    "add_documentcentre",
+    "view_documentcentre",  
+    "change_documentcentre",
+    "delete_documentcentre",
+    "add_documentcentreevidence",
+    "view_documentcentreevidence",
+    "change_documentcentreevidence",
+    "delete_documentcentreevidence",
+    "download_documentcentreevidence",
+    "version_documentcentreevidence",
 ]
 
 DOMAIN_MANAGER_PERMISSIONS_LIST = [
@@ -598,6 +620,20 @@ DOMAIN_MANAGER_PERMISSIONS_LIST = [
     "change_rightrequest",
     "view_rightrequest",
     "delete_rightrequest",
+    "add_documentcentre",
+    "view_documentcentre",  
+    "change_documentcentre",
+    "delete_documentcentre",
+    "approve_documentcentre",
+    "implement_documentcentre",
+    "add_documentcentreevidence",
+    "view_documentcentreevidence",
+    "change_documentcentreevidence",
+    "delete_documentcentreevidence",
+    "approve_documentcentreevidence",
+    "review_documentcentreevidence",
+    "download_documentcentreevidence",
+    "version_documentcentreevidence",
 ]
 
 ADMINISTRATOR_PERMISSIONS_LIST = [
@@ -879,6 +915,18 @@ ADMINISTRATOR_PERMISSIONS_LIST = [
     "view_documentcentre",  
     "change_documentcentre",
     "delete_documentcentre",
+    "approve_documentcentre",
+    "implement_documentcentre",
+    
+    # documentcentreevidence
+    "add_documentcentreevidence",
+    "view_documentcentreevidence",
+    "change_documentcentreevidence",
+    "delete_documentcentreevidence",
+    "approve_documentcentreevidence",
+    "review_documentcentreevidence",
+    "download_documentcentreevidence",
+    "version_documentcentreevidence",
 ]
 
 THIRD_PARTY_RESPONDENT_PERMISSIONS_LIST = [

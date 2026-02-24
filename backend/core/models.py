@@ -3466,7 +3466,7 @@ class Policy(AppliedControl):
         super(Policy, self).save(*args, **kwargs)
 
 from datetime import timedelta
-
+# First, define DocumentCentre
 class DocumentCentre(AbstractBaseModel, FolderMixin):
     """Central document management system with draft and approved evidence versions"""
     
@@ -3485,9 +3485,7 @@ class DocumentCentre(AbstractBaseModel, FolderMixin):
         DRAFT = 1, _("Draft")
         IN_REVIEW = 2, _("In Review")
         APPROVED = 3, _("Approved")
-        ARCHIVED = 4, _("Archived")
-        EXPIRED = 5, _("Expired")
-        DEPRECATED = 6, _("Deprecated")
+        IMPLEMENTED = 4, _("Implemented")
     
     # Core document info
     document_name = models.CharField(max_length=500, verbose_name=_("Document Name"))
@@ -3502,9 +3500,9 @@ class DocumentCentre(AbstractBaseModel, FolderMixin):
         verbose_name=_("Document Status")
     )
     
-    # Dual Evidence System
+    # Dual Evidence System - Will be updated after DocumentCentreEvidence is defined
     draft_evidence = models.OneToOneField(
-        Evidence,
+        'DocumentCentreEvidence',  # Use string reference
         on_delete=models.SET_NULL,
         null=True,
         blank=True,
@@ -3513,7 +3511,7 @@ class DocumentCentre(AbstractBaseModel, FolderMixin):
     )
     
     approved_evidence = models.OneToOneField(
-        Evidence,
+        'DocumentCentreEvidence',  # Use string reference
         on_delete=models.SET_NULL,
         null=True,
         blank=True,
@@ -3678,7 +3676,7 @@ class DocumentCentre(AbstractBaseModel, FolderMixin):
     @property
     def current_evidence(self):
         """Get the active evidence based on document status"""
-        if self.document_status in [self.DocumentStatus.APPROVED, self.DocumentStatus.ARCHIVED] and self.approved_evidence:
+        if self.document_status in [self.DocumentStatus.APPROVED, self.DocumentStatus.IMPLEMENTED] and self.approved_evidence:
             return self.approved_evidence
         return self.draft_evidence
     
@@ -3702,24 +3700,21 @@ class DocumentCentre(AbstractBaseModel, FolderMixin):
             self.approved_evidence = evidence
         elif self.draft_evidence:
             # Create a copy of draft evidence as approved evidence
-            new_evidence = Evidence.objects.create(
+            new_evidence = DocumentCentreEvidence.objects.create(  # Now this will work
                 name=f"{self.draft_evidence.name} (Approved)",
                 description=self.draft_evidence.description,
                 folder=self.draft_evidence.folder,
-                owner=self.draft_evidence.owner.all(),
-                status=Evidence.Status.APPROVED,
-                is_published=True
+                created_by=self.draft_evidence.created_by,
+                status=DocumentCentreEvidence.Status.APPROVED,
+                document=self  # Link to this document
             )
-            # Copy the latest revision
-            latest_rev = self.draft_evidence.last_revision
-            if latest_rev:
-                EvidenceRevision.objects.create(
-                    evidence=new_evidence,
-                    version=1,
-                    attachment=latest_rev.attachment,
-                    link=latest_rev.link,
-                    observation=f"Approved version from {self.draft_evidence.name}"
-                )
+            # Copy attachment if exists
+            if self.draft_evidence.attachment:
+                new_evidence.attachment = self.draft_evidence.attachment
+            if self.draft_evidence.link:
+                new_evidence.link = self.draft_evidence.link
+            new_evidence.save()
+            
             self.approved_evidence = new_evidence
         
         self.document_status = self.DocumentStatus.APPROVED
@@ -3748,6 +3743,277 @@ class DocumentCentre(AbstractBaseModel, FolderMixin):
             return f"{major}.{minor + 1}"
         except:
             return "1.0"
+
+
+# Then define DocumentCentreEvidence
+def document_centre_evidence_upload_path(instance, filename):
+    """
+    Generate upload path for document centre evidence files
+    Format: document_centre_evidence/<document_id>/<evidence_id>/v<version>_<filename>
+    """
+    from django.utils.timezone import now
+    
+    timestamp = now().strftime("%Y%m%d_%H%M%S")
+    doc_id = instance.document.id if instance.document else 'no_document'
+    evidence_id = instance.id if instance.id else 'new'
+    
+    # Sanitize filename
+    name, ext = os.path.splitext(filename)
+    safe_name = re.sub(r'[^a-zA-Z0-9_-]', '_', name)
+    
+    return f"document_centre_evidence/{doc_id}/{evidence_id}/v{instance.version}_{timestamp}_{safe_name}{ext}"
+
+
+class DocumentCentreEvidence(AbstractBaseModel, FolderMixin):
+    """
+    Evidence specifically for Document Centre documents.
+    Simplified version of Evidence model with document-specific fields.
+    """
+    
+    class Status(models.TextChoices):
+        DRAFT = "draft", _("Draft")
+        IN_REVIEW = "in_review", _("In Review")
+        APPROVED = "approved", _("Approved")
+        REJECTED = "rejected", _("Rejected")
+        IMPLEMENTED = "implemented", _("Implemented")
+    
+    # Core fields
+    name = models.CharField(max_length=500, verbose_name=_("Name"))
+    description = models.TextField(
+        blank=True, 
+        null=True,
+        verbose_name=_("Description")
+    )
+    
+    # Status and versioning
+    status = models.CharField(
+        max_length=20,
+        choices=Status.choices,
+        default=Status.DRAFT,
+        verbose_name=_("Status")
+    )
+    version = models.PositiveIntegerField(
+        default=1,
+        verbose_name=_("Version")
+    )
+    
+    # Document relationship - can be linked to a document
+    document = models.ForeignKey(
+        DocumentCentre,  # Now DocumentCentre is defined
+        on_delete=models.CASCADE,
+        null=True,
+        blank=True,
+        related_name="document_evidences",
+        verbose_name=_("Parent Document")
+    )
+    
+    # Owner/creator
+    created_by = models.ForeignKey(
+        User,
+        on_delete=models.SET_NULL,
+        null=True,
+        blank=True,
+        related_name="created_document_evidences",
+        verbose_name=_("Created By")
+    )
+    
+    # File attachment (optional, can also be just a link)
+    attachment = models.FileField(
+        upload_to=document_centre_evidence_upload_path,
+        max_length=500,
+        blank=True,
+        null=True,
+        verbose_name=_("Attachment")
+    )
+    
+    # External link (optional)
+    link = models.URLField(
+        max_length=500,
+        blank=True,
+        null=True,
+        verbose_name=_("External Link")
+    )
+    
+    # Metadata
+    file_size = models.BigIntegerField(
+        null=True,
+        blank=True,
+        verbose_name=_("File Size (bytes)")
+    )
+    file_name = models.CharField(
+        max_length=500,
+        blank=True,
+        null=True,
+        verbose_name=_("File Name")
+    )
+    mime_type = models.CharField(
+        max_length=200,
+        blank=True,
+        null=True,
+        verbose_name=_("MIME Type")
+    )
+    checksum = models.CharField(
+        max_length=64,  # SHA-256
+        blank=True,
+        null=True,
+        verbose_name=_("Checksum (SHA-256)")
+    )
+    
+    # Review/expiry tracking
+    review_date = models.DateField(
+        null=True,
+        blank=True,
+        verbose_name=_("Review Date")
+    )
+    expiry_date = models.DateField(
+        null=True,
+        blank=True,
+        verbose_name=_("Expiry Date")
+    )
+    
+    # Observations/notes
+    notes = models.TextField(
+        blank=True,
+        null=True,
+        verbose_name=_("Notes/Observations")
+    )
+    
+    # Tracking fields
+    is_current = models.BooleanField(
+        default=True,
+        verbose_name=_("Is Current Version")
+    )
+    
+    # For version history - link to previous version
+    previous_version = models.ForeignKey(
+        'self',
+        on_delete=models.SET_NULL,
+        null=True,
+        blank=True,
+        related_name="next_versions",
+        verbose_name=_("Previous Version")
+    )
+    
+    fields_to_check = ["name"]
+    
+    class Meta:
+        verbose_name = _("Document Centre Evidence")
+        verbose_name_plural = _("Document Centre Evidences")
+        ordering = ['-created_at', '-version']
+        indexes = [
+            models.Index(fields=['document', 'status']),
+            models.Index(fields=['document', 'is_current']),
+            models.Index(fields=['expiry_date']),
+            models.Index(fields=['review_date']),
+            models.Index(fields=['status']),
+        ]
+    
+    def __str__(self):
+        doc_name = self.document.document_name if self.document else "No Document"
+        return f"{doc_name} - {self.name} v{self.version} ({self.get_status_display()})"
+    
+    def save(self, *args, **kwargs):
+        # Update file metadata if attachment is provided
+        if self.attachment and not self.file_name:
+            self.file_name = os.path.basename(self.attachment.name)
+            self.file_size = self.attachment.size
+            
+            # Try to detect mime type
+            try:
+                import magic
+                self.mime_type = magic.from_buffer(self.attachment.read(1024), mime=True)
+                self.attachment.seek(0)  # Reset file pointer
+            except (ImportError, Exception):
+                # Fallback to extension-based detection
+                ext = os.path.splitext(self.attachment.name)[1].lower()
+                mime_map = {
+                    '.pdf': 'application/pdf',
+                    '.doc': 'application/msword',
+                    '.docx': 'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
+                    '.xls': 'application/vnd.ms-excel',
+                    '.xlsx': 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet',
+                    '.jpg': 'image/jpeg',
+                    '.jpeg': 'image/jpeg',
+                    '.png': 'image/png',
+                }
+                self.mime_type = mime_map.get(ext, 'application/octet-stream')
+            
+            # Calculate checksum
+            self.checksum = self._calculate_checksum()
+        
+        super().save(*args, **kwargs)
+        
+        # If this is set as current, ensure other versions are not current
+        if self.is_current and self.document:
+            DocumentCentreEvidence.objects.filter(
+                document=self.document,
+                is_current=True
+            ).exclude(id=self.id).update(is_current=False)
+    
+    def _calculate_checksum(self):
+        """Calculate SHA-256 checksum of attachment"""
+        if not self.attachment:
+            return None
+        
+        try:
+            self.attachment.seek(0)
+            sha256 = hashlib.sha256()
+            for chunk in self.attachment.chunks():
+                sha256.update(chunk)
+            self.attachment.seek(0)  # Reset file pointer
+            return sha256.hexdigest()
+        except Exception:
+            return None
+    
+    @property
+    def is_attachment_valid(self):
+        """Check if attachment file still exists"""
+        if not self.attachment:
+            return False
+        try:
+            return self.attachment.storage.exists(self.attachment.name)
+        except Exception:
+            return False
+    
+    @property
+    def formatted_file_size(self):
+        """Return file size in human readable format"""
+        if not self.file_size:
+            return None
+        
+        size = self.file_size
+        if size < 1024:
+            return f"{size} B"
+        elif size < 1024 * 1024:
+            return f"{size / 1024:.1f} KB"
+        elif size < 1024 * 1024 * 1024:
+            return f"{size / 1024 / 1024:.1f} MB"
+        else:
+            return f"{size / 1024 / 1024 / 1024:.1f} GB"
+    
+    def create_new_version(self, user=None):
+        """
+        Create a new version of this evidence
+        """
+        # Mark current as not current
+        self.is_current = False
+        self.save()
+        
+        # Create new version
+        new_version = DocumentCentreEvidence.objects.create(
+            name=self.name,
+            description=self.description,
+            document=self.document,
+            status=DocumentCentreEvidence.Status.DRAFT,
+            version=self.version + 1,
+            created_by=user or self.created_by,
+            folder=self.folder,
+            previous_version=self,
+            # Copy these from current
+            notes=self.notes,
+        )
+        
+        return new_version
 
 class Vulnerability(
     NameDescriptionMixin, FolderMixin, PublishInRootFolderMixin, FilteringLabelMixin
@@ -6166,6 +6432,7 @@ class BridgeTable(models.Model):
 
     def __str__(self):
         return f"{self.team.name} ↔ {self.risk_assessment.name}"
+
 
 auditlog.register(
     ReferenceControl,
