@@ -7570,6 +7570,64 @@ class DocumentCentreViewSet(BaseModelViewSet):
         instance = self.get_object()
         return Response(serializer_class(instance).data)
     
+    @action(detail=True, methods=['patch'], url_path='update-status')
+    def update_status(self, request, pk):
+        """
+        Simple endpoint to update just the document status
+        Example: PATCH /api/document-centre/{id}/update-status/
+        {
+            "document_status": 3,
+            "observation": "Document has been implemented"
+        }
+        """
+        try:
+            document = self.get_object()
+            
+            # Get the new status from request
+            new_status = request.data.get('document_status')
+            
+            if new_status is None:
+                return Response(
+                    {'detail': 'document_status is required'},
+                    status=status.HTTP_400_BAD_REQUEST
+                )
+            
+            # Validate status is valid
+            valid_statuses = dict(DocumentCentre.DocumentStatus.choices)
+            if int(new_status) not in valid_statuses:
+                return Response(
+                    {'detail': f'Invalid status. Choose from: {valid_statuses}'},
+                    status=status.HTTP_400_BAD_REQUEST
+                )
+            
+            # Update the status
+            old_status = document.get_document_status_display()
+            document.document_status = new_status
+            
+            # Update observation if provided
+            if 'observation' in request.data:
+                document.observation = request.data['observation']
+            
+            # If changing to APPROVED, set approval date
+            if int(new_status) == DocumentCentre.DocumentStatus.APPROVED:
+                if not document.approval_date:
+                    document.approval_date = date.today()
+            
+            document.save()
+            
+            # Return simple response
+            return Response({
+                'detail': f'Document status changed from {old_status} to {document.get_document_status_display()}',
+                'document_status': document.document_status,
+                'document_status_display': document.get_document_status_display()
+            }, status=status.HTTP_200_OK)
+            
+        except Exception as e:
+            return Response(
+                {'detail': f'Error updating status: {str(e)}'},
+                status=status.HTTP_400_BAD_REQUEST
+            )
+    
     @action(detail=False, name="Get document type choices")
     def document_types(self, request):
         """Get available document type choices"""
@@ -8293,7 +8351,76 @@ class DocumentCentreEvidenceViewSet(BaseModelViewSet):
             'expired_count': queryset.count(),
             'results': serializer.data
         })
-    
+
+    @action(methods=["get"], detail=True)
+    def attachment(self, request, pk):
+        """
+        Download the attachment for a document centre evidence
+        """
+        # Check permissions using RoleAssignment (similar to your existing code)
+        # object_ids_view, _, _ = RoleAssignment.get_accessible_object_ids(
+        #     Folder.get_root_folder(), 
+        #     request.user, 
+        #     DocumentCentreEvidence,
+        # )
+        
+        # logger.debug(f"User {request.user} has access to evidence IDs: {object_ids_view}")
+        
+        # # Check if user has access to this evidence
+        # if UUID(pk) not in object_ids_view:
+        #     return Response(
+        #         {"detail": "You don't have permission to access this evidence"},
+        #         status=status.HTTP_403_FORBIDDEN
+        #     )
+        
+        # Get the evidence object
+        try:
+            evidence = self.get_object()
+        except Exception:
+            return Response(
+                {"detail": "Evidence not found"},
+                status=status.HTTP_404_NOT_FOUND
+            )
+        
+        # Check if attachment exists
+        if not evidence.attachment:
+            return Response(
+                {"detail": "No attachment found for this evidence"},
+                status=status.HTTP_404_NOT_FOUND
+            )
+        
+        # Check if file exists in storage
+        if not evidence.attachment.storage.exists(evidence.attachment.name):
+            return Response(
+                {"detail": "Attachment file not found on server"},
+                status=status.HTTP_404_NOT_FOUND
+            )
+        
+        # Determine filename to use
+        filename = evidence.file_name or os.path.basename(evidence.attachment.name)
+        
+        # Guess content type
+        content_type = mimetypes.guess_type(filename)[0] or 'application/octet-stream'
+        
+        # Return file response
+        try:
+            response = HttpResponse(
+                evidence.attachment,
+                content_type=content_type,
+                headers={
+                    "Content-Disposition": f"attachment; filename={filename}",
+                    "Content-Length": evidence.file_size or evidence.attachment.size,
+                },
+                status=status.HTTP_200_OK,
+            )
+            return response
+        except Exception as e:
+            logger.error(f"Error downloading attachment: {str(e)}", exc_info=e)
+            return Response(
+                {"detail": f"Error downloading attachment: {str(e)}"},
+                status=status.HTTP_500_INTERNAL_SERVER_ERROR
+            )
+        
     @action(detail=False, methods=['get'])
     def statistics(self, request):
         """

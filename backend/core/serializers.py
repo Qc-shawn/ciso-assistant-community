@@ -3002,13 +3002,13 @@ class DocumentCentreEvidenceWriteSerializer(BaseModelSerializer):
     
     def validate(self, attrs):
         """Validate that either attachment or link is provided"""
-        attachment = attrs.get('attachment')
-        link = attrs.get('link')
+        # attachment = attrs.get('attachment')
+        # link = attrs.get('link')
         
-        if not attachment and not link:
-            raise serializers.ValidationError(
-                "Either attachment or link must be provided"
-            )
+        # if not attachment and not link:
+        #     raise serializers.ValidationError(
+        #         "Either attachment or link must be provided"
+        #     )
         
         return attrs
     
