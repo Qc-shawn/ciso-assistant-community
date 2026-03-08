@@ -5,6 +5,12 @@ from tprm.views import (
     SolutionViewSet,
     EntityAssessmentViewSet,
 )
+
+from committee.views import (
+    CommitteeViewSet, CommitteeMemberViewSet, CommitteeMeetingViewSet,
+    CommitteeDecisionViewSet, CommitteeGRCLinkViewSet, CommitteeDocumentViewSet, CommitteeDocumentReviewViewSet
+)
+
 from library.views import StoredLibraryViewSet, LoadedLibraryViewSet
 import importlib
 
@@ -102,6 +108,14 @@ router.register(r"terminologies", TerminologyViewSet, basename="terminologies")
 router.register(r'document-centre', DocumentCentreViewSet, basename='documentcentre')
 router.register(r'document-centre-evidence', DocumentCentreEvidenceViewSet, basename='documentcentre-evidence')
 
+router.register(r'committees', CommitteeViewSet, basename='committee')
+router.register(r'committee-members', CommitteeMemberViewSet, basename='committee-member')
+router.register(r'committee-meetings', CommitteeMeetingViewSet, basename='committee-meeting')
+router.register(r'committee-decisions', CommitteeDecisionViewSet, basename='committee-decision')
+router.register(r'committee-grc-links', CommitteeGRCLinkViewSet, basename='committee-grc-link')
+router.register(r'committee-documents', CommitteeDocumentViewSet, basename='committee-document')
+router.register(r'committee-document-reviews', CommitteeDocumentReviewViewSet, basename='committee-document-review')
+
 ROUTES = settings.ROUTES
 MODULES = settings.MODULES.values()
 
@@ -116,6 +130,7 @@ for route in ROUTES:
 
 urlpatterns = [
     path("", include(router.urls)),
+    # path('api/', include('committee.urls')),
     path("iam/", include("iam.urls")),
     path("serdes/", include("serdes.urls")),
     path("data-wizard/", include("data_wizard.urls")),

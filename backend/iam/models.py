@@ -226,6 +226,11 @@ class Folder(NameDescriptionMixin):
             ["risk_assessment", "perimeter", "folder"],
             ["risk_scenario", "risk_assessment", "perimeter", "folder"],
             ["compliance_assessment", "perimeter", "folder"],
+            ["committee", "folder"],
+            ["meeting", "committee", "folder"],
+            ["decision", "meeting", "committee", "folder"],
+            ["document", "committee", "folder"],
+            
         ]
 
         # Attempt to traverse each path until a valid folder is found or all paths are exhausted.

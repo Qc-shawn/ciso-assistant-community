@@ -83,6 +83,11 @@ READER_PERMISSIONS_LIST = [
     "view_documentcentreevidence",
     "review_documentcentreevidence",
     "version_documentcentreevidence",
+
+    "view_committee",
+    "view_committeemember",
+    "view_committeemeeting",
+    "view_committeedecision",
 ]
 
 APPROVER_PERMISSIONS_LIST = [
@@ -159,6 +164,12 @@ APPROVER_PERMISSIONS_LIST = [
     "review_documentcentreevidence",
     "download_documentcentreevidence",
     "version_documentcentreevidence",
+
+    "view_committee",
+    "view_committeemember",
+    "view_committeemeeting",
+    "view_committeedecision",
+    "approve_committee_minutes", 
 ]
 
 ANALYST_PERMISSIONS_LIST = [
@@ -384,6 +395,11 @@ ANALYST_PERMISSIONS_LIST = [
     "delete_documentcentreevidence",
     "download_documentcentreevidence",
     "version_documentcentreevidence",
+
+    "view_committee",
+    "view_committeemember",
+    "view_committeemeeting",
+    "view_committeedecision",
 ]
 
 DOMAIN_MANAGER_PERMISSIONS_LIST = [
@@ -634,6 +650,16 @@ DOMAIN_MANAGER_PERMISSIONS_LIST = [
     "review_documentcentreevidence",
     "download_documentcentreevidence",
     "version_documentcentreevidence",
+
+    "add_committee",
+    "view_committee",
+    "change_committee",
+    "delete_committee",
+    "add_committeemember",
+    "view_committeemember",
+    "change_committeemember",
+    "delete_committeemember",
+    "schedule_committee_meeting",
 ]
 
 ADMINISTRATOR_PERMISSIONS_LIST = [
@@ -927,6 +953,61 @@ ADMINISTRATOR_PERMISSIONS_LIST = [
     "review_documentcentreevidence",
     "download_documentcentreevidence",
     "version_documentcentreevidence",
+
+    # committee permissions
+    "add_committee",
+    "view_committee",
+    "change_committee",
+    "delete_committee",
+    "manage_committee_members",
+    "schedule_committee_meeting",
+    "approve_committee_minutes",
+    
+    # committee member permissions
+    "add_committeemember",
+    "view_committeemember",
+    "change_committeemember",
+    "delete_committeemember",
+    
+    # committee meeting permissions
+    "add_committeemeeting",
+    "view_committeemeeting",
+    "change_committeemeeting",
+    "delete_committeemeeting",
+    
+    # committee decision permissions
+    "add_committeedecision",
+    "view_committeedecision",
+    "change_committeedecision",
+    "delete_committeedecision",
+    
+    # committee attendance permissions
+    "add_committeemeetingattendance",
+    "view_committeemeetingattendance",
+    "change_committeemeetingattendance",
+    "delete_committeemeetingattendance",
+    
+    # committee grc link permissions
+    "add_committeegrclink",
+    "view_committeegrclink",
+    "change_committeegrclink",
+    "delete_committeegrclink",
+
+    # Committee Document permissions
+    "add_committeedocument",
+    "view_committeedocument",
+    "change_committeedocument",
+    "delete_committeedocument",
+    "approve_committeedocument",
+    "review_committeedocument",
+    "archive_committeedocument",
+    
+    # Committee Document Review permissions
+    "add_committeedocumentreview",
+    "view_committeedocumentreview",
+    "change_committeedocumentreview",
+    "delete_committeedocumentreview",
+
 ]
 
 THIRD_PARTY_RESPONDENT_PERMISSIONS_LIST = [
