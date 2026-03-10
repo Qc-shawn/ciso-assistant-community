@@ -274,9 +274,9 @@ class CommitteeDecisionWriteSerializer(BaseModelSerializer):
 class CommitteeDecisionReadSerializer(CommitteeDecisionWriteSerializer):
     """Serializer for reading committee decisions"""
     
-    meeting = FieldsRelatedField(fields=['id', 'title', 'start_datetime'])
+    meeting = FieldsRelatedField(fields=['id', 'title', 'start_datetime'])  # Only use existing fields
     status = serializers.CharField(source='get_status_display')
-    supporting_document = FieldsRelatedField(fields=['id', 'document_name'])
+    supporting_document = FieldsRelatedField(fields=['id', 'title', 'document_type'], allow_null=True)
     
     class Meta:
         model = CommitteeDecision
