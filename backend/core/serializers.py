@@ -2614,6 +2614,38 @@ class DocumentCentreWriteSerializer(BaseModelSerializer):
             raise serializers.ValidationError({
                 'draft_evidence': 'At least draft or approved evidence must be provided'
             })
+
+        instance_id = getattr(self.instance, "id", None)
+
+        def _validate_evidence_link(field_name: str):
+            evidence = attrs.get(field_name)
+            if not evidence:
+                return
+
+            # 1) Enforce evidence -> document consistency (DocumentCentreEvidence.document FK)
+            # If evidence is already linked to a different document, block with a clear error.
+            if evidence.document_id and evidence.document_id != instance_id:
+                raise serializers.ValidationError({
+                    field_name: f"This evidence is already linked to another document ({evidence.document_id})."
+                })
+
+            # 2) Enforce OneToOne uniqueness semantics with a helpful error instead of a DB integrity error.
+            # A single evidence cannot be used as draft_evidence (or approved_evidence) in more than one DocumentCentre.
+            if field_name == "draft_evidence":
+                conflict = DocumentCentre.objects.filter(draft_evidence=evidence).exclude(id=instance_id).first()
+                if conflict:
+                    raise serializers.ValidationError({
+                        field_name: f"This evidence is already set as draft evidence for document ({conflict.id})."
+                    })
+            elif field_name == "approved_evidence":
+                conflict = DocumentCentre.objects.filter(approved_evidence=evidence).exclude(id=instance_id).first()
+                if conflict:
+                    raise serializers.ValidationError({
+                        field_name: f"This evidence is already set as approved evidence for document ({conflict.id})."
+                    })
+
+        _validate_evidence_link("draft_evidence")
+        _validate_evidence_link("approved_evidence")
         
         # If approved evidence is provided, status should be APPROVED
         if attrs.get('approved_evidence') and attrs.get('document_status', DocumentCentre.DocumentStatus.DRAFT) == DocumentCentre.DocumentStatus.DRAFT:
@@ -2782,7 +2814,7 @@ class DocumentCentreReadSerializer(DocumentCentreWriteSerializer):
     updated_by = FieldsRelatedField(fields=["id", "first_name", "last_name", "email"])
     document_owner = FieldsRelatedField(fields=["id", "first_name", "last_name", "email"])
     approver = FieldsRelatedField(fields=["id", "first_name", "last_name", "email"])
-    
+
     # Expand related objects
     frameworks = FieldsRelatedField(many=True)
     teams = FieldsRelatedField(many=True)
@@ -3010,6 +3042,15 @@ class DocumentCentreEvidenceWriteSerializer(BaseModelSerializer):
         #         "Either attachment or link must be provided"
         #     )
         
+        # Prevent re-associating an evidence that is already linked to a different document.
+        # (Evidence can be created unlinked, then linked once; but should not be moved silently.)
+        if self.instance and 'document' in attrs:
+            new_doc = attrs.get('document')
+            if new_doc and self.instance.document_id and self.instance.document_id != new_doc.id:
+                raise serializers.ValidationError({
+                    'document': f"This evidence is already linked to another document ({self.instance.document_id})."
+                })
+
         return attrs
     
     def create(self, validated_data):

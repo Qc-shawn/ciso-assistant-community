@@ -8277,6 +8277,42 @@ class DocumentCentreEvidenceViewSet(BaseModelViewSet):
             'evidence': serializer.data,
             'count': len(serializer.data)
         })
+
+    @action(detail=False, methods=['get'], url_path='fresh')
+    def fresh(self, request):
+        """
+        Return "fresh" evidences that are not linked to any DocumentCentre yet.
+
+        These can safely be associated to a DocumentCentre (as draft/approved evidence).
+        """
+        queryset = self.get_queryset().filter(document__isnull=True)
+
+        # Default to only current versions unless explicitly asked otherwise
+        include_versions = request.query_params.get('include_versions', 'false').lower() == 'true'
+        if not include_versions:
+            queryset = queryset.filter(is_current=True)
+
+        queryset = self.filter_queryset(queryset)
+
+        page = self.paginate_queryset(queryset)
+        if page is not None:
+            serializer = DocumentCentreEvidenceReadSerializer(
+                page,
+                many=True,
+                context=self.get_serializer_context()
+            )
+            return self.get_paginated_response(serializer.data)
+
+        serializer = DocumentCentreEvidenceReadSerializer(
+            queryset,
+            many=True,
+            context=self.get_serializer_context()
+        )
+
+        return Response({
+            'count': queryset.count(),
+            'results': serializer.data
+        })
     
     @action(detail=False, methods=['get'])
     def expiring_soon(self, request):
